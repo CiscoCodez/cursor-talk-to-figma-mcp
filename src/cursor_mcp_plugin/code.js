@@ -989,9 +989,7 @@ async function createEllipse(params) {
 async function createImageLayer(params) {
   const { x = 0, y = 0, width = 100, height = 100, name = "Image", parentId, imageBase64, scaleMode = "FIT", rotation = 0, opacity = 1 } = params || {};
   if (!imageBase64) throw new Error("create_image_layer requires imageBase64");
-  const binary = atob(imageBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const bytes = base64ToUint8Array(imageBase64);
   const image = figma.createImage(bytes);
   const node = figma.createRectangle();
   node.x = Number(x);
