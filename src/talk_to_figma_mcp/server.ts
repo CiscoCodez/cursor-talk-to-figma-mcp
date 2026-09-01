@@ -709,6 +709,29 @@ server.tool(
   }
 );
 
+server.tool(
+  "set_prototype_transition",
+  "Connect two editable Figma states with a prototype transition such as Smart Animate",
+  {
+    sourceNodeId: z.string().describe("Source frame or interactive node ID"),
+    destinationNodeId: z.string().describe("Destination frame ID"),
+    triggerType: z.enum(["AFTER_TIMEOUT", "ON_CLICK", "ON_PRESS", "ON_HOVER"]).optional(),
+    timeout: z.number().min(0).optional().describe("AFTER_TIMEOUT delay in milliseconds"),
+    transitionType: z.enum(["SMART_ANIMATE", "DISSOLVE"]).optional(),
+    duration: z.number().min(0).max(10).optional().describe("Transition duration in seconds"),
+    easingType: z.enum(["EASE_IN", "EASE_OUT", "EASE_IN_AND_OUT", "LINEAR", "GENTLE", "QUICK", "SLOW"]).optional(),
+    navigation: z.enum(["NAVIGATE", "CHANGE_TO"]).optional(),
+  },
+  async (params: any) => {
+    try {
+      const result = await sendCommandToFigma("set_prototype_transition", params);
+      return { content: [{ type: "text", text: `Created prototype transition ${JSON.stringify(result)}` }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error creating prototype transition: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
 // Set Fill Color Tool
 server.tool(
   "set_fill_color",
@@ -2741,6 +2764,7 @@ type FigmaCommand =
   | "set_text_font"
   | "set_text_style"
   | "set_node_properties"
+  | "set_prototype_transition"
   | "set_fill_color"
   | "set_stroke_color"
   | "move_node"
@@ -2859,6 +2883,16 @@ type CommandParams = {
     opacity?: number;
     name?: string;
     blur?: number;
+  };
+  set_prototype_transition: {
+    sourceNodeId: string;
+    destinationNodeId: string;
+    triggerType?: "AFTER_TIMEOUT" | "ON_CLICK" | "ON_PRESS" | "ON_HOVER";
+    timeout?: number;
+    transitionType?: "SMART_ANIMATE" | "DISSOLVE";
+    duration?: number;
+    easingType?: "EASE_IN" | "EASE_OUT" | "EASE_IN_AND_OUT" | "LINEAR" | "GENTLE" | "QUICK" | "SLOW";
+    navigation?: "NAVIGATE" | "CHANGE_TO";
   };
   set_fill_color: {
     nodeId: string;

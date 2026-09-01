@@ -142,6 +142,8 @@ async function handleCommand(command, params) {
       return await setTextStyle(params);
     case "set_node_properties":
       return await setNodeProperties(params);
+    case "set_prototype_transition":
+      return await setPrototypeTransition(params);
     case "set_fill_color":
       return await setFillColor(params);
     case "set_stroke_color":
@@ -1020,6 +1022,50 @@ async function setNodeProperties(params) {
   if (shadow) effects.push({ type: "DROP_SHADOW", color: shadow.color, offset: shadow.offset || { x: 0, y: 8 }, radius: Number(shadow.radius || 20), spread: Number(shadow.spread || 0), visible: true, blendMode: "NORMAL" });
   if (effects.length && "effects" in node) node.effects = effects;
   return { id: node.id, name: node.name, x: node.x, y: node.y, width: node.width, height: node.height, rotation: node.rotation, opacity: node.opacity };
+}
+
+async function setPrototypeTransition(params) {
+  const {
+    sourceNodeId,
+    destinationNodeId,
+    triggerType = "AFTER_TIMEOUT",
+    timeout = 100,
+    transitionType = "SMART_ANIMATE",
+    duration = 0.8,
+    easingType = "EASE_OUT",
+    navigation = "NAVIGATE",
+  } = params || {};
+  if (!sourceNodeId || !destinationNodeId) {
+    throw new Error("set_prototype_transition requires sourceNodeId and destinationNodeId");
+  }
+  const source = await figma.getNodeByIdAsync(sourceNodeId);
+  const destination = await figma.getNodeByIdAsync(destinationNodeId);
+  if (!source || typeof source.setReactionsAsync !== "function") {
+    throw new Error(`Source node does not support prototype reactions: ${sourceNodeId}`);
+  }
+  if (!destination) throw new Error(`Destination node not found: ${destinationNodeId}`);
+  const trigger = triggerType === "AFTER_TIMEOUT"
+    ? { type: "AFTER_TIMEOUT", timeout: Number(timeout) }
+    : { type: triggerType };
+  const action = {
+    type: "NODE",
+    destinationId: destination.id,
+    navigation,
+    transition: {
+      type: transitionType,
+      easing: { type: easingType },
+      duration: Number(duration),
+    },
+    preserveScrollPosition: false,
+  };
+  await source.setReactionsAsync([{ trigger, actions: [action] }]);
+  return {
+    sourceNodeId: source.id,
+    destinationNodeId: destination.id,
+    trigger,
+    transition: action.transition,
+    navigation,
+  };
 }
 
 async function setFillColor(params) {

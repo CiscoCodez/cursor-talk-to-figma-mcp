@@ -15,6 +15,7 @@ For privacy and safe redistribution, this edition also removes the upstream clie
 - **Separate editable image layers:** `create_image_layer` creates a selectable, movable, resizable, rotatable image node from a local path, URL, or base64 source.
 - **Native ellipses:** `create_ellipse` creates editable Figma ellipse layers with fill and opacity.
 - **Transforms and effects:** `set_node_properties` exposes position, size, rotation, opacity, naming, and layer blur.
+- **Prototype motion:** `set_prototype_transition` connects editable states with Smart Animate or dissolve transitions, including timed autoplay triggers for looping motion studies.
 - **First-class MCP tools:** every enhancement is implemented on both sides of the bridge—the MCP server schema and the Figma plugin command handler.
 
 ### How the enhancement works
