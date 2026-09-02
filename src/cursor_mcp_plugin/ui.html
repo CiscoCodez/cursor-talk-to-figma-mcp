@@ -161,6 +161,45 @@
         transform: translateX(20px);
       }
 
+      input:disabled + .toggle-slider {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+
+      .window-visibility {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px solid #3f3f3f;
+        border-radius: 8px;
+        background: #262626;
+      }
+
+      .window-visibility-copy strong,
+      .window-visibility-copy span {
+        display: block;
+      }
+
+      .window-visibility-copy strong {
+        margin-bottom: 3px;
+        color: #f4f4f4;
+        font-size: 13px;
+      }
+
+      .window-visibility-copy span {
+        color: #a3a3a3;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+
+      .window-visibility .toggle-switch {
+        flex: 0 0 auto;
+        margin: 0;
+      }
+
       .section {
         margin-bottom: 24px;
       }
@@ -292,6 +331,22 @@
           Not connected to Cursor MCP server
         </div>
 
+        <div class="window-visibility">
+          <div class="window-visibility-copy">
+            <strong>Hide connection window</strong>
+            <span>The MCP connection keeps running in the background.</span>
+          </div>
+          <label class="toggle-switch">
+            <input
+              id="toggle-hide-ui"
+              type="checkbox"
+              aria-label="Hide the Talk to Figma connection window"
+              disabled
+            />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
         <div id="mcp-config" class="section hidden">
           <h2>MCP Configuration</h2>
           <p>
@@ -365,13 +420,15 @@
               >Github</a
             >
           </p>
-          <p>Version: 1.1.0</p>
+          <p>Version: 1.2.0</p>
 
           <h2>How to Use</h2>
           <ol>
             <li>Make sure the MCP server is running in Cursor</li>
             <li>Connect to the server using the port number (default: 3055)</li>
             <li>Once connected, you can interact with Figma through Cursor</li>
+            <li>Use the Hide connection window toggle to keep it running unobtrusively</li>
+            <li>Show it again from Plugins → Development → Cursor MCP Plugin → Show connection window</li>
           </ol>
           <p style="font-size: 11px; color: #888; margin-top: 16px;">
             This enhanced development build does not send usage analytics.
@@ -389,6 +446,7 @@
         pendingRequests: new Map(),
         channel: null,
         commandTracking: new Map(),
+        hideAfterConnect: false,
       };
 
       // This enhanced development build intentionally disables usage analytics.
@@ -401,6 +459,7 @@
       const portInput = document.getElementById("port");
       const connectButton = document.getElementById("btn-connect");
       const connectionStatus = document.getElementById("connection-status");
+      const hideUiToggle = document.getElementById("toggle-hide-ui");
 
       // Tabs
       const tabs = document.querySelectorAll(".tab");
@@ -437,6 +496,8 @@
         connectButton.textContent = isConnected ? "Disconnect" : "Connect";
         connectButton.className = isConnected ? "secondary" : "primary";
         portInput.disabled = isConnected;
+        hideUiToggle.disabled = !isConnected;
+        if (!isConnected) hideUiToggle.checked = false;
 
         // Show/hide MCP config section
         const mcpConfig = document.getElementById("mcp-config");
@@ -506,6 +567,11 @@
                     },
                     "*"
                   );
+
+                  if (state.hideAfterConnect) {
+                    state.hideAfterConnect = false;
+                    setTimeout(hidePluginWindow, 150);
+                  }
                 }
               } else if (data.type === "error") {
                 console.error("Error:", data.message);
@@ -734,6 +800,18 @@
         }
       });
 
+      function hidePluginWindow() {
+        if (!state.connected) {
+          hideUiToggle.checked = false;
+          return;
+        }
+        parent.postMessage({ pluginMessage: { type: "hide-ui" } }, "*");
+      }
+
+      hideUiToggle.addEventListener("change", () => {
+        if (hideUiToggle.checked) hidePluginWindow();
+      });
+
       // Function to update progress UI
       function updateProgressUI(progressData) {
         // Show progress container if hidden
@@ -815,7 +893,15 @@
             updateConnectionStatus(message.connected, message.message);
             break;
           case "auto-connect":
-            connectButton.click();
+            state.hideAfterConnect = Boolean(message.hideAfterConnect);
+            if (state.connected) {
+              if (state.hideAfterConnect) {
+                state.hideAfterConnect = false;
+                hidePluginWindow();
+              }
+            } else {
+              connectButton.click();
+            }
             break;
           case "auto-disconnect":
             connectButton.click();

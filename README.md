@@ -16,6 +16,7 @@ For privacy and safe redistribution, this edition also removes the upstream clie
 - **Native ellipses:** `create_ellipse` creates editable Figma ellipse layers with fill and opacity.
 - **Transforms and effects:** `set_node_properties` exposes position, size, rotation, opacity, naming, and layer blur.
 - **Prototype motion:** `set_prototype_transition` connects editable states with Smart Animate or dissolve transitions, including timed autoplay triggers for looping motion studies.
+- **Background window mode:** hide the connection window without stopping its WebSocket, reopen it from the Figma Plugins menu, or launch it directly in the background.
 - **First-class MCP tools:** every enhancement is implemented on both sides of the bridge—the MCP server schema and the Figma plugin command handler.
 
 ### How the enhancement works
@@ -59,6 +60,10 @@ bun socket
 ```
 
 4. Install the enhanced Figma development plugin locally using the repository manifest. The Figma Community build does not include the enhancements listed above.
+
+### Hide or restore the connection window
+
+After connecting, enable **Hide connection window**. Figma stops rendering the window while the plugin iframe and MCP WebSocket continue running. To restore it, choose **Plugins → Development → Cursor MCP Plugin → Show connection window**. You can also choose **Connect in background** from the same menu to start the bridge without opening the full window.
 
 ## Quick Video Tutorial
 

@@ -54,8 +54,14 @@ async function sendProgressUpdate(
   return update;
 }
 
-// Show UI
-figma.showUI(__html__, { width: 350, height: 600 });
+// The menu can launch the normal connection window or start it hidden.
+// Figma keeps a hidden plugin UI running, so its WebSocket remains active.
+const launchCommand = figma.command || "show-ui";
+figma.showUI(__html__, {
+  width: 350,
+  height: 600,
+  visible: launchCommand !== "connect-hidden",
+});
 
 // Plugin commands from UI
 figma.ui.onmessage = async (msg) => {
@@ -65,6 +71,15 @@ figma.ui.onmessage = async (msg) => {
       break;
     case "notify":
       figma.notify(msg.message);
+      break;
+    case "hide-ui":
+      figma.ui.hide();
+      figma.notify(
+        "Talk to Figma is still connected. Reopen it from Plugins → Development → Cursor MCP Plugin → Show connection window."
+      );
+      break;
+    case "show-ui":
+      figma.ui.show();
       break;
     case "close-plugin":
       figma.closePlugin();
@@ -91,7 +106,14 @@ figma.ui.onmessage = async (msg) => {
 
 // Listen for plugin commands from menu
 figma.on("run", ({ command }) => {
-  figma.ui.postMessage({ type: "auto-connect" });
+  const resolvedCommand = command || launchCommand;
+  if (resolvedCommand === "show-ui") {
+    figma.ui.show();
+  }
+  figma.ui.postMessage({
+    type: "auto-connect",
+    hideAfterConnect: resolvedCommand === "connect-hidden",
+  });
 });
 
 // Update plugin settings
