@@ -4,7 +4,7 @@ This project implements a Model Context Protocol (MCP) integration between AI ag
 
 ## Enhanced edition
 
-This repository is an enhanced build of [Grab's TalkToFigma MCP](https://github.com/grab/cursor-talk-to-figma-mcp), based on upstream commit `ddd90f3`. It preserves the original MIT-licensed bridge and adds the controls needed to build genuinely editable Figma compositions instead of flattening complete designs into raster plates.
+This repository is a fork of [Grab's TalkToFigma MCP](https://github.com/grab/cursor-talk-to-figma-mcp). Its history continues directly from Grab's repository and adds the controls needed to build genuinely editable Figma compositions instead of flattening complete designs into raster plates.
 
 For privacy and safe redistribution, this edition also removes the upstream client-side Google Analytics integration and its embedded Measurement Protocol credential. The development plugin communicates only with the local TalkToFigma relay by default.
 
@@ -30,6 +30,10 @@ The bridge has three cooperating processes:
 New operations therefore require matching implementations in both `src/talk_to_figma_mcp/server.ts` and `src/cursor_mcp_plugin/code.js`. The stable channel is configured in `src/cursor_mcp_plugin/ui.html`.
 
 > **Security note:** `figma` is intentionally convenient and predictable. The upstream relay does not authenticate channel membership, so use it only on a trusted machine/network. A persisted random channel is preferable for shared or remotely exposed relays.
+
+### Upstream synchronization
+
+The `Sync upstream safely` GitHub Actions workflow checks Grab's `main` branch every Monday and can also be run manually. It merges upstream changes only when Git can merge them cleanly and the enhanced project still builds successfully. If a merge conflict or build failure occurs, the workflow stops without pushing a partial update, leaving the fork unchanged for manual review.
 
 https://github.com/user-attachments/assets/129a14d2-ed73-470f-9a4c-2240b2a4885c
 
