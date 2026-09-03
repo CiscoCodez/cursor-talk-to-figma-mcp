@@ -2,6 +2,33 @@
 
 This project implements a Model Context Protocol (MCP) integration between AI agent (Cursor, Claude Code) and Figma, allowing AI agent to communicate with Figma for reading designs and modifying them programmatically.
 
+## Enhanced edition
+
+This repository is an enhanced build of [Grab's TalkToFigma MCP](https://github.com/grab/cursor-talk-to-figma-mcp), based on upstream commit `ddd90f3`. It preserves the original MIT-licensed bridge and adds the controls needed to build genuinely editable Figma compositions instead of flattening complete designs into raster plates.
+
+For privacy and safe redistribution, this edition also removes the upstream client-side Google Analytics integration and its embedded Measurement Protocol credential. The development plugin communicates only with the local TalkToFigma relay by default.
+
+### What was enhanced
+
+- **Stable connection channel:** the Figma development plugin joins `figma` on every reconnect, removing the need to copy a new random channel ID each time.
+- **Editable font selection:** `create_text` accepts `fontFamily` and `fontStyle`; `list_available_fonts`, `set_text_font`, and `set_text_style` expose family, style, size, line height, letter spacing, alignment, and text bounds.
+- **Separate editable image layers:** `create_image_layer` creates a selectable, movable, resizable, rotatable image node from a local path, URL, or base64 source.
+- **Native ellipses:** `create_ellipse` creates editable Figma ellipse layers with fill and opacity.
+- **Transforms and effects:** `set_node_properties` exposes position, size, rotation, opacity, naming, and layer blur.
+- **First-class MCP tools:** every enhancement is implemented on both sides of the bridge—the MCP server schema and the Figma plugin command handler.
+
+### How the enhancement works
+
+The bridge has three cooperating processes:
+
+1. The MCP server exposes validated tools to the AI client.
+2. The Bun WebSocket relay forwards commands on port `3055`.
+3. The locally linked Figma development plugin executes those commands through the Figma Plugin API.
+
+New operations therefore require matching implementations in both `src/talk_to_figma_mcp/server.ts` and `src/cursor_mcp_plugin/code.js`. The stable channel is configured in `src/cursor_mcp_plugin/ui.html`.
+
+> **Security note:** `figma` is intentionally convenient and predictable. The upstream relay does not authenticate channel membership, so use it only on a trusted machine/network. A persisted random channel is preferable for shared or remotely exposed relays.
+
 https://github.com/user-attachments/assets/129a14d2-ed73-470f-9a4c-2240b2a4885c
 
 ## Project Structure
@@ -30,7 +57,7 @@ bun setup
 bun socket
 ```
 
-4. **NEW** Install Figma plugin from [Figma community page](https://www.figma.com/community/plugin/1485687494525374295/cursor-talk-to-figma-mcp-plugin) or [install locally](#figma-plugin)
+4. Install the enhanced Figma development plugin locally using the repository manifest. The Figma Community build does not include the enhancements listed above.
 
 ## Quick Video Tutorial
 

@@ -57,24 +57,6 @@ async function sendProgressUpdate(
 // Show UI
 figma.showUI(__html__, { width: 350, height: 600 });
 
-// Initialize anonymous analytics client_id (persisted via clientStorage)
-(async () => {
-  try {
-    let clientId = await figma.clientStorage.getAsync("analyticsClientId");
-    if (!clientId) {
-      clientId =
-        Date.now().toString(36) +
-        "-" +
-        Math.random().toString(36).slice(2, 10) +
-        Math.random().toString(36).slice(2, 10);
-      await figma.clientStorage.setAsync("analyticsClientId", clientId);
-    }
-    figma.ui.postMessage({ type: "analytics-client-id", clientId });
-  } catch (e) {
-    console.error("analytics init failed:", e);
-  }
-})();
-
 // Plugin commands from UI
 figma.ui.onmessage = async (msg) => {
   switch (msg.type) {
@@ -144,10 +126,22 @@ async function handleCommand(command, params) {
       return await readMyDesign();
     case "create_rectangle":
       return await createRectangle(params);
+    case "create_ellipse":
+      return await createEllipse(params);
+    case "create_image_layer":
+      return await createImageLayer(params);
     case "create_frame":
       return await createFrame(params);
     case "create_text":
       return await createText(params);
+    case "list_available_fonts":
+      return await listAvailableFonts(params);
+    case "set_text_font":
+      return await setTextFont(params);
+    case "set_text_style":
+      return await setTextStyle(params);
+    case "set_node_properties":
+      return await setNodeProperties(params);
     case "set_fill_color":
       return await setFillColor(params);
     case "set_stroke_color":
@@ -845,6 +839,8 @@ async function createText(params) {
     fontColor = { r: 0, g: 0, b: 0, a: 1 }, // Default to black
     name = "",
     parentId,
+    fontFamily = "Inter",
+    fontStyle,
   } = params || {};
 
   // Map common font weights to Figma font styles
@@ -878,11 +874,12 @@ async function createText(params) {
   textNode.y = y;
   textNode.name = name || text;
   try {
+    const resolvedStyle = fontStyle || getFontStyle(fontWeight);
     await figma.loadFontAsync({
-      family: "Inter",
-      style: getFontStyle(fontWeight),
+      family: fontFamily,
+      style: resolvedStyle,
     });
-    textNode.fontName = { family: "Inter", style: getFontStyle(fontWeight) };
+    textNode.fontName = { family: fontFamily, style: resolvedStyle };
     textNode.fontSize = parseInt(fontSize);
   } catch (error) {
     console.error("Error setting font size", error);
@@ -930,6 +927,101 @@ async function createText(params) {
     fills: textNode.fills,
     parentId: textNode.parent ? textNode.parent.id : undefined,
   };
+}
+
+async function listAvailableFonts(params) {
+  const query = String((params && params.query) || "").trim().toLowerCase();
+  const fonts = await figma.listAvailableFontsAsync();
+  const matches = fonts
+    .map((entry) => entry.fontName)
+    .filter((font) => !query || font.family.toLowerCase().includes(query))
+    .filter((font, index, list) =>
+      list.findIndex((candidate) => candidate.family === font.family && candidate.style === font.style) === index
+    )
+    .slice(0, 200);
+  return { query, count: matches.length, fonts: matches };
+}
+
+async function setTextFont(params) {
+  const { nodeId, family, style = "Regular" } = params || {};
+  if (!nodeId || !family) throw new Error("set_text_font requires nodeId and family");
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node || node.type !== "TEXT") throw new Error(`Text node not found: ${nodeId}`);
+  const fontName = { family, style };
+  await figma.loadFontAsync(fontName);
+  node.fontName = fontName;
+  return { id: node.id, name: node.name, fontName: node.fontName, fontSize: node.fontSize };
+}
+
+async function setTextStyle(params) {
+  const { nodeId, family, style = "Regular", fontSize, lineHeight, letterSpacing, align, width, height } = params || {};
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node || node.type !== "TEXT") throw new Error(`Text node not found: ${nodeId}`);
+  const fontName = { family: family || node.fontName.family, style };
+  await figma.loadFontAsync(fontName);
+  node.fontName = fontName;
+  if (fontSize != null) node.fontSize = Number(fontSize);
+  if (lineHeight != null) node.lineHeight = { unit: "PIXELS", value: Number(lineHeight) };
+  if (letterSpacing != null) node.letterSpacing = { unit: "PERCENT", value: Number(letterSpacing) };
+  if (align) node.textAlignHorizontal = align;
+  if (width != null || height != null) {
+    node.textAutoResize = "NONE";
+    node.resize(Number(width || node.width), Number(height || node.height));
+  }
+  return { id: node.id, fontName: node.fontName, fontSize: node.fontSize, width: node.width, height: node.height };
+}
+
+async function createEllipse(params) {
+  const { x = 0, y = 0, width = 100, height = 100, name = "Ellipse", parentId, color, opacity = 1 } = params || {};
+  const node = figma.createEllipse();
+  node.x = Number(x);
+  node.y = Number(y);
+  node.resize(Number(width), Number(height));
+  node.name = name;
+  if (color) node.fills = [{ type: "SOLID", color: { r: Number(color.r), g: Number(color.g), b: Number(color.b) }, opacity: color.a == null ? 1 : Number(color.a) }];
+  node.opacity = Number(opacity);
+  const parent = parentId ? await figma.getNodeByIdAsync(parentId) : figma.currentPage;
+  if (!parent || !("appendChild" in parent)) throw new Error(`Parent node does not support children: ${parentId}`);
+  parent.appendChild(node);
+  return { id: node.id, name: node.name, x: node.x, y: node.y, width: node.width, height: node.height };
+}
+
+async function createImageLayer(params) {
+  const { x = 0, y = 0, width = 100, height = 100, name = "Image", parentId, imageBase64, scaleMode = "FIT", rotation = 0, opacity = 1 } = params || {};
+  if (!imageBase64) throw new Error("create_image_layer requires imageBase64");
+  const binary = atob(imageBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const image = figma.createImage(bytes);
+  const node = figma.createRectangle();
+  node.x = Number(x);
+  node.y = Number(y);
+  node.resize(Number(width), Number(height));
+  node.name = name;
+  node.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode }];
+  node.rotation = Number(rotation);
+  node.opacity = Number(opacity);
+  const parent = parentId ? await figma.getNodeByIdAsync(parentId) : figma.currentPage;
+  if (!parent || !("appendChild" in parent)) throw new Error(`Parent node does not support children: ${parentId}`);
+  parent.appendChild(node);
+  return { id: node.id, name: node.name, x: node.x, y: node.y, width: node.width, height: node.height, imageHash: image.hash };
+}
+
+async function setNodeProperties(params) {
+  const { nodeId, x, y, width, height, rotation, opacity, name, blur, shadow } = params || {};
+  const node = await figma.getNodeByIdAsync(nodeId);
+  if (!node) throw new Error(`Node not found: ${nodeId}`);
+  if (x != null && "x" in node) node.x = Number(x);
+  if (y != null && "y" in node) node.y = Number(y);
+  if ((width != null || height != null) && "resize" in node) node.resize(Number(width || node.width), Number(height || node.height));
+  if (rotation != null && "rotation" in node) node.rotation = Number(rotation);
+  if (opacity != null && "opacity" in node) node.opacity = Number(opacity);
+  if (name) node.name = name;
+  const effects = [];
+  if (blur != null) effects.push({ type: "LAYER_BLUR", radius: Number(blur), visible: true });
+  if (shadow) effects.push({ type: "DROP_SHADOW", color: shadow.color, offset: shadow.offset || { x: 0, y: 8 }, radius: Number(shadow.radius || 20), spread: Number(shadow.spread || 0), visible: true, blendMode: "NORMAL" });
+  if (effects.length && "effects" in node) node.effects = effects;
+  return { id: node.id, name: node.name, x: node.x, y: node.y, width: node.width, height: node.height, rotation: node.rotation, opacity: node.opacity };
 }
 
 async function setFillColor(params) {

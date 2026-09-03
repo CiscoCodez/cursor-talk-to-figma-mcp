@@ -374,7 +374,7 @@
             <li>Once connected, you can interact with Figma through Cursor</li>
           </ol>
           <p style="font-size: 11px; color: #888; margin-top: 16px;">
-            Anonymous usage analytics (plugin opens, command names, success/error) are sent to Google Analytics to help improve the plugin. No file content or personal data is collected.
+            This enhanced development build does not send usage analytics.
           </p>
         </div>
       </div>
@@ -391,77 +391,11 @@
         commandTracking: new Map(),
       };
 
-      // --- Anonymous analytics (GA4 Measurement Protocol) ---
-      const analytics = (() => {
-        const MEASUREMENT_ID = "G-9YH0ER9BXC";
-        const API_SECRET = "Xqiy0AtbQt-Xbx4bdoc8Kw";
-        // Set ?_dbg=1 on the parent URL or window.__ANALYTICS_DEBUG__ = true
-        // to route events through GA4 DebugView and log validation errors.
-        const DEBUG = window.__ANALYTICS_DEBUG__ === true;
-        const HOST = "https://www.google-analytics.com";
-        const PATH = DEBUG ? "/debug/mp/collect" : "/mp/collect";
-        const ENDPOINT =
-          HOST +
-          PATH +
-          "?measurement_id=" +
-          MEASUREMENT_ID +
-          "&api_secret=" +
-          API_SECRET;
-        const sessionId = Date.now().toString();
-        const sessionStart = Date.now();
-        let clientId = null;
-        const queue = [];
-
-        function send(name, params) {
-          const eventParams = Object.assign(
-            {
-              session_id: sessionId,
-              engagement_time_msec: Math.max(100, Date.now() - sessionStart),
-            },
-            params || {}
-          );
-          if (DEBUG) eventParams.debug_mode = 1;
-          const body = {
-            client_id: clientId,
-            events: [{ name, params: eventParams }],
-          };
-          try {
-            const req = fetch(ENDPOINT, {
-              method: "POST",
-              body: JSON.stringify(body),
-              keepalive: true,
-            });
-            if (DEBUG) {
-              req
-                .then((r) => r.json())
-                .then((j) => console.log("[analytics debug]", name, j))
-                .catch((e) => console.warn("[analytics debug] error", e));
-            } else {
-              req.catch(() => {});
-            }
-          } catch (e) {
-            // analytics must never break the plugin
-          }
-        }
-
-        return {
-          track(event, params) {
-            if (!clientId) {
-              queue.push([event, params]);
-              return;
-            }
-            send(event, params);
-          },
-          setClientId(id) {
-            clientId = id;
-            while (queue.length) {
-              const [e, p] = queue.shift();
-              send(e, p);
-            }
-          },
-        };
-      })();
-      analytics.track("plugin_open");
+      // This enhanced development build intentionally disables usage analytics.
+      const analytics = {
+        track() {},
+        setClientId() {},
+      };
 
       // UI Elements
       const portInput = document.getElementById("port");
@@ -528,8 +462,9 @@
           state.socket = new WebSocket(wsUrl);
 
           state.socket.onopen = () => {
-            // Generate random channel name
-            const channelName = generateChannelName();
+            // Keep one private channel stable across reconnects so MCP clients
+            // can reconnect without asking the user for a new session ID.
+            const channelName = "figma";
             console.log("Joining channel:", channelName);
             state.channel = channelName;
 

@@ -396,6 +396,35 @@ server.tool(
   }
 );
 
+// Create Ellipse Tool
+server.tool(
+  "create_ellipse",
+  "Create an editable ellipse in Figma",
+  {
+    x: z.number().describe("X position"),
+    y: z.number().describe("Y position"),
+    width: z.number().positive().describe("Ellipse width"),
+    height: z.number().positive().describe("Ellipse height"),
+    name: z.string().optional().describe("Semantic layer name"),
+    parentId: z.string().optional().describe("Optional parent node ID"),
+    color: z.object({
+      r: z.number().min(0).max(1),
+      g: z.number().min(0).max(1),
+      b: z.number().min(0).max(1),
+      a: z.number().min(0).max(1).optional(),
+    }).optional().describe("Solid fill color"),
+    opacity: z.number().min(0).max(1).optional().describe("Layer opacity"),
+  },
+  async (params: any) => {
+    try {
+      const result = await sendCommandToFigma("create_ellipse", params);
+      return { content: [{ type: "text", text: `Created ellipse ${JSON.stringify(result)}` }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error creating ellipse: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
 // Create Frame Tool
 server.tool(
   "create_frame",
@@ -560,8 +589,10 @@ server.tool(
       .string()
       .optional()
       .describe("Optional parent node ID to append the text to"),
+    fontFamily: z.string().optional().describe("Figma font family (default: Inter)"),
+    fontStyle: z.string().optional().describe("Figma font style, such as Regular or Bold"),
   },
-  async ({ x, y, text, fontSize, fontWeight, fontColor, name, parentId }: any) => {
+  async ({ x, y, text, fontSize, fontWeight, fontColor, name, parentId, fontFamily, fontStyle }: any) => {
     try {
       const result = await sendCommandToFigma("create_text", {
         x,
@@ -572,6 +603,8 @@ server.tool(
         fontColor: fontColor || { r: 0, g: 0, b: 0, a: 1 },
         name: name || "Text",
         parentId,
+        fontFamily: fontFamily || "Inter",
+        fontStyle,
       });
       const typedResult = result as { name: string; id: string };
       return {
@@ -592,6 +625,86 @@ server.tool(
           },
         ],
       };
+    }
+  }
+);
+
+server.tool(
+  "list_available_fonts",
+  "List Figma fonts available to the currently open desktop file",
+  { query: z.string().optional().describe("Optional case-insensitive family-name filter") },
+  async ({ query }: any) => {
+    try {
+      const result = await sendCommandToFigma("list_available_fonts", { query });
+      return { content: [{ type: "text", text: JSON.stringify(result) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error listing fonts: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+server.tool(
+  "set_text_font",
+  "Set the editable font family and style on a Figma text node",
+  {
+    nodeId: z.string().describe("Text node ID"),
+    family: z.string().describe("Figma font family"),
+    style: z.string().optional().describe("Figma font style (default: Regular)"),
+  },
+  async (params: any) => {
+    try {
+      const result = await sendCommandToFigma("set_text_font", params);
+      return { content: [{ type: "text", text: `Updated text font ${JSON.stringify(result)}` }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error setting text font: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+server.tool(
+  "set_text_style",
+  "Set editable typography properties on a Figma text node",
+  {
+    nodeId: z.string().describe("Text node ID"),
+    family: z.string().optional().describe("Figma font family"),
+    style: z.string().optional().describe("Figma font style"),
+    fontSize: z.number().positive().optional(),
+    lineHeight: z.number().positive().optional().describe("Line height in pixels"),
+    letterSpacing: z.number().optional().describe("Letter spacing in percent"),
+    align: z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]).optional(),
+    width: z.number().positive().optional(),
+    height: z.number().positive().optional(),
+  },
+  async (params: any) => {
+    try {
+      const result = await sendCommandToFigma("set_text_style", params);
+      return { content: [{ type: "text", text: `Updated text style ${JSON.stringify(result)}` }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error setting text style: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
+
+server.tool(
+  "set_node_properties",
+  "Set editable transform, opacity, blur, and naming properties on a Figma node",
+  {
+    nodeId: z.string().describe("Node ID"),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    width: z.number().positive().optional(),
+    height: z.number().positive().optional(),
+    rotation: z.number().min(-180).max(180).optional().describe("Rotation in degrees"),
+    opacity: z.number().min(0).max(1).optional(),
+    name: z.string().optional(),
+    blur: z.number().min(0).optional().describe("Layer blur radius"),
+  },
+  async (params: any) => {
+    try {
+      const result = await sendCommandToFigma("set_node_properties", params);
+      return { content: [{ type: "text", text: `Updated node properties ${JSON.stringify(result)}` }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error setting node properties: ${error instanceof Error ? error.message : String(error)}` }] };
     }
   }
 );
@@ -2620,8 +2733,14 @@ type FigmaCommand =
   | "get_nodes_info"
   | "read_my_design"
   | "create_rectangle"
+  | "create_ellipse"
+  | "create_image_layer"
   | "create_frame"
   | "create_text"
+  | "list_available_fonts"
+  | "set_text_font"
+  | "set_text_style"
+  | "set_node_properties"
   | "set_fill_color"
   | "set_stroke_color"
   | "move_node"
@@ -2672,6 +2791,28 @@ type CommandParams = {
     name?: string;
     parentId?: string;
   };
+  create_ellipse: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    name?: string;
+    parentId?: string;
+    color?: { r: number; g: number; b: number; a?: number };
+    opacity?: number;
+  };
+  create_image_layer: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    name?: string;
+    parentId?: string;
+    imageBase64: string;
+    scaleMode?: "FILL" | "FIT" | "CROP" | "TILE";
+    rotation?: number;
+    opacity?: number;
+  };
   create_frame: {
     x: number;
     y: number;
@@ -2692,6 +2833,32 @@ type CommandParams = {
     fontColor?: { r: number; g: number; b: number; a?: number };
     name?: string;
     parentId?: string;
+    fontFamily?: string;
+    fontStyle?: string;
+  };
+  list_available_fonts: { query?: string };
+  set_text_font: { nodeId: string; family: string; style?: string };
+  set_text_style: {
+    nodeId: string;
+    family?: string;
+    style?: string;
+    fontSize?: number;
+    lineHeight?: number;
+    letterSpacing?: number;
+    align?: "LEFT" | "CENTER" | "RIGHT" | "JUSTIFIED";
+    width?: number;
+    height?: number;
+  };
+  set_node_properties: {
+    nodeId: string;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    rotation?: number;
+    opacity?: number;
+    name?: string;
+    blur?: number;
   };
   set_fill_color: {
     nodeId: string;
@@ -3060,6 +3227,53 @@ function sendCommandToFigma(
     ws.send(JSON.stringify(request));
   });
 }
+
+// Create Editable Image Layer Tool
+server.tool(
+  "create_image_layer",
+  "Create a separate editable Figma image layer from a local file path, URL, or base64 data",
+  {
+    x: z.number(),
+    y: z.number(),
+    width: z.number().positive(),
+    height: z.number().positive(),
+    name: z.string().optional(),
+    parentId: z.string().optional(),
+    imagePath: z.string().optional().describe("Absolute local image path (preferred)"),
+    imageUrl: z.string().optional(),
+    imageBase64: z.string().optional(),
+    scaleMode: z.enum(["FILL", "FIT", "CROP", "TILE"]).optional(),
+    rotation: z.number().min(-180).max(180).optional(),
+    opacity: z.number().min(0).max(1).optional(),
+  },
+  async ({ imagePath, imageUrl, imageBase64, ...params }: any) => {
+    try {
+      const sources = [imagePath, imageUrl, imageBase64].filter((source) => source !== undefined && source !== "");
+      if (sources.length !== 1) throw new Error("Provide exactly one of imagePath, imageUrl or imageBase64");
+      let base64Data: string;
+      if (imagePath) {
+        base64Data = (await readFile(imagePath)).toString("base64");
+      } else if (imageUrl) {
+        const response = await fetch(imageUrl);
+        if (!response.ok) throw new Error(`Failed to fetch image URL (HTTP ${response.status})`);
+        base64Data = Buffer.from(await response.arrayBuffer()).toString("base64");
+      } else {
+        base64Data = imageBase64.replace(/^data:[^;,]+;base64,/, "");
+      }
+      if (base64Data.length > 12 * 1024 * 1024) throw new Error("Image is too large to send over the relay (~9MB binary max)");
+      const result = await sendCommandToFigma("create_image_layer", {
+        ...params,
+        imageBase64: base64Data,
+        scaleMode: params.scaleMode || "FIT",
+        rotation: params.rotation || 0,
+        opacity: params.opacity ?? 1,
+      });
+      return { content: [{ type: "text", text: `Created editable image layer ${JSON.stringify(result)}` }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error creating image layer: ${error instanceof Error ? error.message : String(error)}` }] };
+    }
+  }
+);
 
 // Set Image Fill Tool
 server.tool(
