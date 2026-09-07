@@ -69,10 +69,13 @@ const pendingRequests = new Map<string, {
   reject: (reason: unknown) => void;
   timeout: ReturnType<typeof setTimeout>;
   lastActivity: number; // Add timestamp for last activity
+  inactivityTimeoutMs: number;
 }>();
 
 // Track which channel each client is in
 let currentChannel: string | null = null;
+let desiredChannel: string | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Create MCP server
 const server = new McpServer({
@@ -3063,10 +3066,16 @@ function processFigmaNodeResponse(result: unknown): any {
 
 // Update the connectToFigma function
 function connectToFigma(port: number = 3055) {
-  // If already connected, do nothing
-  if (ws && ws.readyState === WebSocket.OPEN) {
+  // If already connected or connecting, do nothing. Creating a second socket
+  // here can leave both clients joined to the stable channel and duplicate work.
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
     logger.info('Already connected to Figma');
     return;
+  }
+
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
   }
 
   const wsUrl = serverUrl === 'localhost' ? `${WS_URL}:${port}` : WS_URL;
@@ -3075,8 +3084,14 @@ function connectToFigma(port: number = 3055) {
 
   ws.on('open', () => {
     logger.info('Connected to Figma socket server');
-    // Reset channel on new connection
+    // The relay connection is new, so channel membership must be restored.
     currentChannel = null;
+    if (desiredChannel) {
+      const channelToRejoin = desiredChannel;
+      joinChannel(channelToRejoin).catch((error) => {
+        logger.warn(`Could not automatically rejoin ${channelToRejoin}: ${error instanceof Error ? error.message : String(error)}`);
+      });
+    }
   });
 
   ws.on("message", (data: any) => {
@@ -3112,7 +3127,7 @@ function connectToFigma(port: number = 3055) {
               pendingRequests.delete(requestId);
               request.reject(new Error('Request to Figma timed out'));
             }
-          }, 60000); // 60 second timeout for inactivity
+          }, request.inactivityTimeoutMs);
 
           // Log progress
           logger.info(`Progress update for ${progressData.commandType}: ${progressData.progress}% - ${progressData.message}`);
@@ -3136,10 +3151,11 @@ function connectToFigma(port: number = 3055) {
       logger.log('myResponse' + JSON.stringify(myResponse));
 
       // Handle response to a request
+      const hasResult = myResponse && Object.prototype.hasOwnProperty.call(myResponse, "result");
       if (
-        myResponse.id &&
+        myResponse?.id &&
         pendingRequests.has(myResponse.id) &&
-        myResponse.result
+        (hasResult || myResponse.error)
       ) {
         const request = pendingRequests.get(myResponse.id)!;
         clearTimeout(request.timeout);
@@ -3148,9 +3164,7 @@ function connectToFigma(port: number = 3055) {
           logger.error(`Error from Figma: ${myResponse.error}`);
           request.reject(new Error(myResponse.error));
         } else {
-          if (myResponse.result) {
-            request.resolve(myResponse.result);
-          }
+          request.resolve(myResponse.result);
         }
 
         pendingRequests.delete(myResponse.id);
@@ -3180,7 +3194,12 @@ function connectToFigma(port: number = 3055) {
 
     // Attempt to reconnect
     logger.info('Attempting to reconnect in 2 seconds...');
-    setTimeout(() => connectToFigma(port), 2000);
+    if (!reconnectTimer) {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectToFigma(port);
+      }, 2000);
+    }
   });
 }
 
@@ -3190,10 +3209,23 @@ async function joinChannel(channelName: string): Promise<void> {
     throw new Error("Not connected to Figma");
   }
 
+  const normalizedChannel = channelName.trim().toLowerCase();
+  if (!normalizedChannel) {
+    throw new Error("Channel name cannot be empty");
+  }
+
+  desiredChannel = normalizedChannel;
+
   try {
-    await sendCommandToFigma("join", { channel: channelName });
-    currentChannel = channelName;
-    logger.info(`Joined channel: ${channelName}`);
+    const result = await sendCommandToFigma("join", { channel: normalizedChannel }) as any;
+    const peers = result && typeof result === "object" ? result.peers : null;
+    // Membership is valid even if the Figma UI is still reconnecting. Keeping
+    // the channel here lets subsequent commands work as soon as the UI returns.
+    currentChannel = normalizedChannel;
+    if (peers && Number(peers.figma || 0) === 0 && Number(peers.unknown || 0) === 0) {
+      throw new Error(`Joined relay channel "${normalizedChannel}", but no Figma plugin is listening`);
+    }
+    logger.info(`Joined channel: ${normalizedChannel}`);
   } catch (error) {
     logger.error(`Failed to join channel: ${error instanceof Error ? error.message : String(error)}`);
     throw error;
@@ -3204,7 +3236,7 @@ async function joinChannel(channelName: string): Promise<void> {
 function sendCommandToFigma(
   command: FigmaCommand,
   params: unknown = {},
-  timeoutMs: number = 30000
+  timeoutMs?: number
 ): Promise<unknown> {
   return new Promise((resolve, reject) => {
     // If not connected, try to connect first
@@ -3222,9 +3254,22 @@ function sendCommandToFigma(
     }
 
     const id = uuidv4();
+    const heavyCommands = new Set<FigmaCommand>([
+      "read_my_design",
+      "get_node_info",
+      "get_nodes_info",
+      "scan_text_nodes",
+      "scan_nodes_by_types",
+      "clone_node",
+      "export_node_as_image",
+      "set_multiple_text_contents",
+      "delete_multiple_nodes",
+    ]);
+    const effectiveTimeoutMs = timeoutMs ?? (heavyCommands.has(command) ? 180000 : 60000);
     const request = {
       id,
       type: command === "join" ? "join" : "message",
+      clientType: "mcp",
       ...(command === "join"
         ? { channel: (params as any).channel }
         : { channel: currentChannel }),
@@ -3242,23 +3287,30 @@ function sendCommandToFigma(
     const timeout = setTimeout(() => {
       if (pendingRequests.has(id)) {
         pendingRequests.delete(id);
-        logger.error(`Request ${id} to Figma timed out after ${timeoutMs / 1000} seconds`);
+        logger.error(`Request ${id} to Figma timed out after ${effectiveTimeoutMs / 1000} seconds`);
         reject(new Error('Request to Figma timed out'));
       }
-    }, timeoutMs);
+    }, effectiveTimeoutMs);
 
     // Store the promise callbacks to resolve/reject later
     pendingRequests.set(id, {
       resolve,
       reject,
       timeout,
-      lastActivity: Date.now()
+      lastActivity: Date.now(),
+      inactivityTimeoutMs: effectiveTimeoutMs,
     });
 
     // Send the request
     logger.info(`Sending command to Figma: ${command}`);
     logger.debug(`Request details: ${JSON.stringify(request)}`);
-    ws.send(JSON.stringify(request));
+    ws.send(JSON.stringify(request), (error) => {
+      if (!error || !pendingRequests.has(id)) return;
+      const pending = pendingRequests.get(id)!;
+      clearTimeout(pending.timeout);
+      pendingRequests.delete(id);
+      pending.reject(error);
+    });
   });
 }
 

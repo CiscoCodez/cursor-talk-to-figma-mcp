@@ -447,6 +447,13 @@
         channel: null,
         commandTracking: new Map(),
         hideAfterConnect: false,
+        manualDisconnect: false,
+        reconnectAttempts: 0,
+        reconnectTimer: null,
+        heartbeatTimer: null,
+        lastPongAt: 0,
+        activeRequestId: null,
+        outboundMessages: [],
       };
 
       // This enhanced development build intentionally disables usage analytics.
@@ -509,20 +516,55 @@
         }
       }
 
+      function stopHeartbeat() {
+        if (state.heartbeatTimer) clearInterval(state.heartbeatTimer);
+        state.heartbeatTimer = null;
+      }
+
+      function startHeartbeat() {
+        stopHeartbeat();
+        state.lastPongAt = Date.now();
+        state.heartbeatTimer = setInterval(() => {
+          const socket = state.socket;
+          if (!socket || socket.readyState !== WebSocket.OPEN) return;
+          if (Date.now() - state.lastPongAt > 30000) {
+            console.warn("WebSocket heartbeat timed out; reconnecting");
+            socket.close();
+            return;
+          }
+          socket.send(JSON.stringify({ type: "ping", timestamp: Date.now() }));
+        }, 10000);
+      }
+
+      function scheduleReconnect() {
+        if (state.manualDisconnect || state.reconnectTimer) return;
+        const delay = Math.min(1000 * 2 ** state.reconnectAttempts, 15000);
+        state.reconnectAttempts += 1;
+        updateConnectionStatus(false, `Connection lost. Reconnecting in ${Math.ceil(delay / 1000)}s…`);
+        state.reconnectTimer = setTimeout(() => {
+          state.reconnectTimer = null;
+          connectToServer(state.serverPort, true);
+        }, delay);
+      }
+
       // Connect to WebSocket server
-      async function connectToServer(port) {
+      async function connectToServer(port, isReconnect = false) {
         try {
-          if (state.connected && state.socket) {
+          if (state.socket && (state.socket.readyState === WebSocket.OPEN || state.socket.readyState === WebSocket.CONNECTING)) {
             updateConnectionStatus(true, "Already connected to server");
             return;
           }
 
+          if (!isReconnect) state.manualDisconnect = false;
           state.serverPort = port;
           const wsUrl = `ws://localhost:${port}`;
+          const socket = new WebSocket(wsUrl);
+          state.socket = socket;
 
-          state.socket = new WebSocket(wsUrl);
-
-          state.socket.onopen = () => {
+          socket.onopen = () => {
+            if (state.socket !== socket) return;
+            state.reconnectAttempts = 0;
+            startHeartbeat();
             // Keep one private channel stable across reconnects so MCP clients
             // can reconnect without asking the user for a new session ID.
             const channelName = "figma";
@@ -534,14 +576,20 @@
               JSON.stringify({
                 type: "join",
                 channel: channelName.trim(),
+                clientType: "figma",
               })
             );
           };
 
-          state.socket.onmessage = (event) => {
+          socket.onmessage = (event) => {
             try {
               const data = JSON.parse(event.data);
               console.log("Received message:", data);
+
+              if (data.type === "pong") {
+                state.lastPongAt = Date.now();
+                return;
+              }
 
               if (data.type === "system") {
                 // Successfully joined channel
@@ -556,6 +604,11 @@
                     port: state.serverPort,
                     channel: channelName,
                   });
+
+                  const queuedMessages = state.outboundMessages.splice(0);
+                  for (const queuedMessage of queuedMessages) {
+                    socket.send(JSON.stringify(queuedMessage));
+                  }
 
                   // Notify the plugin code
                   parent.postMessage(
@@ -576,7 +629,7 @@
               } else if (data.type === "error") {
                 console.error("Error:", data.message);
                 updateConnectionStatus(false, `Error: ${data.message}`);
-                state.socket.close();
+                socket.close();
               }
 
               handleSocketMessage(data);
@@ -585,17 +638,18 @@
             }
           };
 
-          state.socket.onclose = () => {
+          socket.onclose = () => {
+            if (state.socket !== socket) return;
+            stopHeartbeat();
             state.connected = false;
             state.socket = null;
             updateConnectionStatus(false, "Disconnected from server");
+            scheduleReconnect();
           };
 
-          state.socket.onerror = (error) => {
+          socket.onerror = (error) => {
             console.error("WebSocket error:", error);
-            updateConnectionStatus(false, "Connection error");
-            state.connected = false;
-            state.socket = null;
+            // onclose performs cleanup and starts the reconnect loop.
           };
         } catch (error) {
           console.error("Connection error:", error);
@@ -608,6 +662,10 @@
 
       // Disconnect from websocket server
       function disconnectFromServer() {
+        state.manualDisconnect = true;
+        if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = null;
+        stopHeartbeat();
         if (state.socket) {
           state.socket.close();
           state.socket = null;
@@ -620,6 +678,7 @@
       async function handleSocketMessage(payload) {
         const data = payload.message;
         console.log("handleSocketMessage", data);
+        if (!data || typeof data !== "object") return;
 
         // If it's a response to a previous request
         if (data.id && state.pendingRequests.has(data.id)) {
@@ -680,6 +739,16 @@
         analytics.track("command_executed", params);
       }
 
+      function sendOrQueueSocketMessage(message) {
+        if (state.connected && state.socket?.readyState === WebSocket.OPEN) {
+          state.socket.send(JSON.stringify(message));
+          return true;
+        }
+        state.outboundMessages.push(message);
+        console.warn("Socket unavailable; response queued until reconnect");
+        return false;
+      }
+
       // Send a command to the WebSocket server
       async function sendCommand(command, params) {
         return new Promise((resolve, reject) => {
@@ -716,13 +785,7 @@
 
       // Send success response back to WebSocket
       function sendSuccessResponse(id, result) {
-        if (!state.connected || !state.socket) {
-          console.error("Cannot send response: socket not connected");
-          return;
-        }
-
-        state.socket.send(
-          JSON.stringify({
+        sendOrQueueSocketMessage({
             id,
             type: "message",
             channel: state.channel,
@@ -730,19 +793,12 @@
               id,
               result,
             },
-          })
-        );
+          });
       }
 
       // Send error response back to WebSocket
       function sendErrorResponse(id, errorMessage) {
-        if (!state.connected || !state.socket) {
-          console.error("Cannot send error response: socket not connected");
-          return;
-        }
-
-        state.socket.send(
-          JSON.stringify({
+        sendOrQueueSocketMessage({
             id,
             type: "message",
             channel: state.channel,
@@ -751,8 +807,7 @@
               error: errorMessage,
               result: {},
             },
-          })
-        );
+          });
       }
 
       // Helper to generate unique IDs
@@ -849,16 +904,11 @@
 
       // Send operation progress update to server
       function sendProgressUpdateToServer(progressData) {
-        if (!state.connected || !state.socket) {
-          console.error("Cannot send progress update: socket not connected");
-          return;
-        }
-
         console.log("Sending progress update to server:", progressData);
 
-        const requestId = state.activeRequestId || progressData.commandId;
-        state.socket.send(
-          JSON.stringify({
+        const requestId = progressData.commandId || state.activeRequestId;
+        if (!requestId) return;
+        sendOrQueueSocketMessage({
             id: requestId,
             type: "progress_update",
             channel: state.channel,
@@ -867,8 +917,7 @@
               type: "progress_update",
               data: progressData,
             },
-          })
-        );
+          });
       }
 
       // Reset progress UI
@@ -910,11 +959,13 @@
             // Forward the result from plugin code back to WebSocket
             sendSuccessResponse(message.id, message.result);
             trackCommandResult(message.id, true);
+            if (state.activeRequestId === message.id) state.activeRequestId = null;
             break;
           case "command-error":
             // Forward the error from plugin code back to WebSocket
             sendErrorResponse(message.id, message.error);
             trackCommandResult(message.id, false, message.error);
+            if (state.activeRequestId === message.id) state.activeRequestId = null;
             break;
           case "command_progress":
             // Update UI with progress information

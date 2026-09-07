@@ -63,6 +63,48 @@ figma.showUI(__html__, {
   visible: launchCommand !== "connect-hidden",
 });
 
+// Figma's plugin sandbox can become saturated when multiple MCP clients send
+// expensive commands at once. Keep command execution ordered and emit activity
+// while a long command is running so the requester does not mistake it for a
+// dead connection.
+const commandQueue = [];
+let processingCommand = false;
+
+async function processCommandQueue() {
+  if (processingCommand) return;
+  processingCommand = true;
+
+  while (commandQueue.length > 0) {
+    const msg = commandQueue.shift();
+    const activityTimer = setInterval(() => {
+      sendProgressUpdate(
+        msg.id,
+        msg.command,
+        "in_progress",
+        0,
+        0,
+        0,
+        "Still working in Figma…"
+      ).catch(() => {});
+    }, 15000);
+
+    try {
+      const result = await handleCommand(msg.command, msg.params);
+      figma.ui.postMessage({ type: "command-result", id: msg.id, result });
+    } catch (error) {
+      figma.ui.postMessage({
+        type: "command-error",
+        id: msg.id,
+        error: error.message || "Error executing command",
+      });
+    } finally {
+      clearInterval(activityTimer);
+    }
+  }
+
+  processingCommand = false;
+}
+
 // Plugin commands from UI
 figma.ui.onmessage = async (msg) => {
   switch (msg.type) {
@@ -85,21 +127,19 @@ figma.ui.onmessage = async (msg) => {
       figma.closePlugin();
       break;
     case "execute-command":
-      // Execute commands received from UI (which gets them from WebSocket)
-      try {
-        const result = await handleCommand(msg.command, msg.params);
-        figma.ui.postMessage({
-          type: "command-result",
-          id: msg.id,
-          result,
-        });
-      } catch (error) {
-        figma.ui.postMessage({
-          type: "command-error",
-          id: msg.id,
-          error: error.message || "Error executing command",
-        });
+      commandQueue.push(msg);
+      if (commandQueue.length > 1 || processingCommand) {
+        sendProgressUpdate(
+          msg.id,
+          msg.command,
+          "queued",
+          0,
+          0,
+          0,
+          `Queued behind ${commandQueue.length - (processingCommand ? 0 : 1)} command(s)`
+        ).catch(() => {});
       }
+      processCommandQueue();
       break;
   }
 };
