@@ -10,12 +10,12 @@
   ],
   "menu": [
     {
-      "name": "Show connection window",
-      "command": "show-ui"
-    },
-    {
       "name": "Connect in background",
       "command": "connect-hidden"
+    },
+    {
+      "name": "Show connection window",
+      "command": "show-ui"
     }
   ],
   "permissions": [],
