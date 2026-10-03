@@ -2,6 +2,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { createServer } from "node:http";
 import { z } from "zod";
 import WebSocket from "ws";
 import { v4 as uuidv4 } from "uuid";
@@ -3644,7 +3646,32 @@ async function main() {
     logger.warn('Will try to connect when the first command is sent');
   }
 
-  // Start the MCP server with stdio transport
+  if (process.argv.includes('--http')) {
+    const host = '127.0.0.1';
+    const port = Number(process.env.MCP_HTTP_PORT || 3056);
+    const allowedHosts = new Set([
+      `${host}:${port}`,
+      `localhost:${port}`,
+      'ideapad.tailbb17f1.ts.net',
+      'ideapad.tailbb17f1.ts.net:443',
+    ]);
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
+    await server.connect(transport);
+
+    createServer(async (req, res) => {
+      if (req.url !== '/mcp' || !allowedHosts.has(req.headers.host || '') || req.headers.origin) {
+        res.writeHead(403).end('Forbidden');
+        return;
+      }
+
+      await transport.handleRequest(req, res);
+    }).listen(port, host, () => logger.info(`FigmaMCP server running on http://${host}:${port}/mcp`));
+    return;
+  }
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info('FigmaMCP server running on stdio');
