@@ -49,6 +49,10 @@ _No pending manual tests._
   - Testers: 1
   - Result: Passed manually on 2026-10-04. Returned in 6-305ms with a clear message and wrote no file.
 
+- [x] **Pixel art exports sharp without setting resampling**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-04. A generated 16x16 four-colour test image was imported at exact size, then exported at `scale=1` (16x16) and `scale=16` (256x256). Both returned exactly the source's 4 colours with zero new colours, and one row of the 256x256 result contained only 2 distinct colours, so blocks stayed flat. Code-driven `exportAsync` uses nearest-neighbour sampling, so no `Basic` setting is needed. Manual exports through Figma's export panel still default to `Detailed` and do blur pixel art. Temporary probe node deleted afterwards.
+
 - [x] **Bridge stays healthy after exports**
   - Testers: 1
   - Result: Passed manually on 2026-10-04. `get_document_info` succeeded after PNG/JPG/SVG/PDF exports and after stale replies.

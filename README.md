@@ -236,7 +236,7 @@ The MCP server provides the following tools for interacting with Figma:
 
 - `export_node_as_image` - Export a node to PNG, JPG, SVG, or PDF and save it to disk (default `~/Downloads/figma-exports`). Accepts `format`, `scale`, `width`, `height`, `suffix`, `useAbsoluteBounds`, `outputPath`, and `inlinePreview`. Small exports are also returned inline as an image.
 - The Figma window must be visible and unminimized. Figma's raster exporter never resolves while the window is minimized, so PNG/JPG/PDF requests time out. SVG export still works when minimized, which makes it a quick way to tell "window is minimized" apart from a real failure.
-- Image resampling (`Detailed` / `Basic`) is an editor-only export panel control. It is not part of the Figma Plugin API's `ExportSettings`, so it cannot be selected from a plugin. Use `scale`, `width`, or `height` to control output resolution instead.
+- Image resampling (`Detailed` / `Basic`) is an editor-only export panel control. It is not part of the Figma Plugin API's `ExportSettings`, so it cannot be set from a plugin. You do not need it: code-driven `exportAsync` already uses nearest-neighbour sampling for image fills, so pixel art stays sharp. Verified by exporting a 16x16 four-colour test image at `scale=16` (a 256x256 result) with zero new colours and perfectly flat blocks, which smooth resampling cannot produce. Exports you run by hand through Figma's export panel do default to `Detailed` and will blur pixel art, so set `Basic` there when exporting pixel art manually.
 
 ### Connection Management
 
