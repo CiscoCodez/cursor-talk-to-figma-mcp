@@ -5,19 +5,21 @@ Automated coverage: `bun run test` (plugin handler, end-to-end MCP export, relay
 
 ## Pending - Solo
 
-- [ ] **useAbsoluteBounds and suffix on real content**
-  - Testers: 1
-  - Setup: Same connection; a text node with padding around it, and a cropped node.
-  - Steps: Export the text node with `useAbsoluteBounds=true`, then export anything with `suffix="-hero"`.
-  - Expected: The bounds export is not cropped and the saved filename ends with `-hero`. Verified only against a stub so far.
-
-- [ ] **Export after long idle, window visible**
-  - Testers: 1
-  - Setup: Same connection.
-  - Steps: Leave idle past the point where the old bridge used to break, then export without re-running the plugin.
-  - Expected: Export succeeds. Distinguishes a connection problem from the minimized-window problem.
+_No pending manual tests._
 
 ## Completed
+
+- [x] **Export after long idle**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-04. After roughly two hours of idle with the Figma window visible, an export on the session's own MCP socket returned immediately with a valid 16311 byte PNG. The old failure mode, where a long-idle bridge stopped answering, did not reappear.
+
+- [x] **useAbsoluteBounds on a text node**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-04. Text node `378:19` ("Header proof", 456x22) exported as SVG. Default gave `width="454" height="12"`, cropped to glyph ink so ascenders and descenders were clipped. With `useAbsoluteBounds=true` it gave `width="456" height="22"`, the full node box matching the scanned bbox.
+
+- [x] **suffix reaches the default file name**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-04. `suffix="-hero"` with default naming produced `~/Downloads/figma-exports/378_19-hero.png`. An explicit `outputPath` deliberately wins over the suffix, which is the documented precedence.
 
 - [x] **Section fails fast for raster formats**
   - Testers: 1
