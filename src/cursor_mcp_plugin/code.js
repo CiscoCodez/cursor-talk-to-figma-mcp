@@ -1708,13 +1708,46 @@ async function createComponentInstance(params) {
   }
 }
 
-async function exportNodeAsImage(params) {
-  const { nodeId, scale = 1 } = params || {};
+const EXPORT_MIME_TYPES = {
+  PNG: "image/png",
+  JPG: "image/jpeg",
+  SVG: "image/svg+xml",
+  PDF: "application/pdf",
+};
 
-  const format = "PNG";
+const EXPORT_EXTENSIONS = {
+  PNG: "png",
+  JPG: "jpg",
+  SVG: "svg",
+  PDF: "pdf",
+};
+
+// ponytail: 256 MiB ceiling keeps one export from exhausting the plugin sandbox.
+// Raise it if a real export needs more.
+const MAX_EXPORT_BYTES = 256 * 1024 * 1024;
+
+async function exportNodeAsImage(params) {
+  const {
+    nodeId,
+    format: requestedFormat = "PNG",
+    scale,
+    width,
+    height,
+    suffix,
+    useAbsoluteBounds,
+  } = params || {};
 
   if (!nodeId) {
     throw new Error("Missing nodeId parameter");
+  }
+
+  const requested = String(requestedFormat).toUpperCase();
+  const format = requested === "JPEG" ? "JPG" : requested;
+
+  if (!EXPORT_MIME_TYPES[format]) {
+    throw new Error(
+      `Unsupported export format: ${requestedFormat}. Use PNG, JPG, SVG or PDF.`
+    );
   }
 
   const node = await figma.getNodeByIdAsync(nodeId);
@@ -1726,97 +1759,85 @@ async function exportNodeAsImage(params) {
     throw new Error(`Node does not support exporting: ${nodeId}`);
   }
 
+  // Figma's own export panel offers nothing for a Section, and exportAsync
+  // simply never settles for raster formats instead of rejecting. Fail fast so
+  // the caller gets an actionable message rather than a timeout.
+  // ponytail: only SECTION is special-cased; extend if other types show up.
+  if (node.type === "SECTION" && format !== "SVG") {
+    throw new Error(
+      `"${node.name || nodeId}" is a Section, which Figma cannot export as ${format}. Export a frame inside it instead, or use format=SVG.`
+    );
+  }
+
+  const constraint =
+    typeof width === "number"
+      ? { type: "WIDTH", value: width }
+      : typeof height === "number"
+      ? { type: "HEIGHT", value: height }
+      : { type: "SCALE", value: typeof scale === "number" ? scale : 1 };
+
+  // SVG_STRING returns text, so an SVG never pays for base64. PDF has no
+  // constraint option, only the bounds flag.
+  const settings =
+    format === "SVG"
+      ? { format: "SVG_STRING", useAbsoluteBounds: useAbsoluteBounds === true }
+      : format === "PDF"
+      ? { format: "PDF", useAbsoluteBounds: useAbsoluteBounds === true }
+      : { format, constraint, suffix };
+
+  let exported;
   try {
-    const settings = {
-      format: format,
-      constraint: { type: "SCALE", value: scale },
-    };
-
-    const bytes = await node.exportAsync(settings);
-
-    let mimeType;
-    switch (format) {
-      case "PNG":
-        mimeType = "image/png";
-        break;
-      case "JPG":
-        mimeType = "image/jpeg";
-        break;
-      case "SVG":
-        mimeType = "image/svg+xml";
-        break;
-      case "PDF":
-        mimeType = "application/pdf";
-        break;
-      default:
-        mimeType = "application/octet-stream";
-    }
-
-    // Proper way to convert Uint8Array to base64
-    const base64 = customBase64Encode(bytes);
-    // const imageData = `data:${mimeType};base64,${base64}`;
-
-    return {
-      nodeId,
-      format,
-      scale,
-      mimeType,
-      imageData: base64,
-    };
+    exported = await node.exportAsync(settings);
   } catch (error) {
     throw new Error(`Error exporting node as image: ${error.message}`);
   }
+
+  const isText = typeof exported === "string";
+  const byteSize = isText ? exported.length : exported.byteLength;
+
+  if (byteSize > MAX_EXPORT_BYTES) {
+    throw new Error(
+      `Export is ${byteSize} bytes, over the ${MAX_EXPORT_BYTES} byte plugin limit. Export a smaller node, or set width/height instead of scale.`
+    );
+  }
+
+  return {
+    nodeId,
+    format,
+    extension: EXPORT_EXTENSIONS[format],
+    mimeType: EXPORT_MIME_TYPES[format],
+    encoding: isText ? "utf8" : "base64",
+    byteSize,
+    data: isText ? exported : customBase64Encode(exported),
+  };
 }
+// Linear-time base64 encoder. Repeatedly appending to one string made large
+// exports effectively quadratic inside the plugin sandbox, which surfaced as
+// export_node_as_image timing out instead of returning.
 function customBase64Encode(bytes) {
   const chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  let base64 = "";
+  const parts = [];
+  let buffer = 0;
+  let bits = 0;
 
-  const byteLength = bytes.byteLength;
-  const byteRemainder = byteLength % 3;
-  const mainLength = byteLength - byteRemainder;
-
-  let a, b, c, d;
-  let chunk;
-
-  // Main loop deals with bytes in chunks of 3
-  for (let i = 0; i < mainLength; i = i + 3) {
-    // Combine the three bytes into a single integer
-    chunk = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
-
-    // Use bitmasks to extract 6-bit segments from the triplet
-    a = (chunk & 16515072) >> 18; // 16515072 = (2^6 - 1) << 18
-    b = (chunk & 258048) >> 12; // 258048 = (2^6 - 1) << 12
-    c = (chunk & 4032) >> 6; // 4032 = (2^6 - 1) << 6
-    d = chunk & 63; // 63 = 2^6 - 1
-
-    // Convert the raw binary segments to the appropriate ASCII encoding
-    base64 += chars[a] + chars[b] + chars[c] + chars[d];
+  for (let i = 0; i < bytes.length; i++) {
+    buffer = (buffer << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 6) {
+      bits -= 6;
+      parts.push(chars[(buffer >> bits) & 63]);
+    }
   }
 
-  // Deal with the remaining bytes and padding
-  if (byteRemainder === 1) {
-    chunk = bytes[mainLength];
-
-    a = (chunk & 252) >> 2; // 252 = (2^6 - 1) << 2
-
-    // Set the 4 least significant bits to zero
-    b = (chunk & 3) << 4; // 3 = 2^2 - 1
-
-    base64 += chars[a] + chars[b] + "==";
-  } else if (byteRemainder === 2) {
-    chunk = (bytes[mainLength] << 8) | bytes[mainLength + 1];
-
-    a = (chunk & 64512) >> 10; // 64512 = (2^6 - 1) << 10
-    b = (chunk & 1008) >> 4; // 1008 = (2^6 - 1) << 4
-
-    // Set the 2 least significant bits to zero
-    c = (chunk & 15) << 2; // 15 = 2^4 - 1
-
-    base64 += chars[a] + chars[b] + chars[c] + "=";
+  if (bits > 0) {
+    parts.push(chars[(buffer << (6 - bits)) & 63]);
+    while (parts.length % 4 !== 0) {
+      parts.push("=");
+    }
   }
 
-  return base64;
+  return parts.join("");
 }
 
 async function setCornerRadius(params) {

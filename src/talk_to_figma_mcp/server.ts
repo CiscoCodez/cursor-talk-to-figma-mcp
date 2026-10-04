@@ -7,7 +7,13 @@ import { createServer } from "node:http";
 import { z } from "zod";
 import WebSocket from "ws";
 import { v4 as uuidv4 } from "uuid";
-import { readFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import { homedir } from "os";
+import path from "path";
+
+// Relay port. Overridable so the export path can be tested end to end against
+// an isolated relay instead of the live one.
+const RELAY_PORT = Number(process.env.FIGMA_RELAY_PORT || 3055);
 
 // Define TypeScript interfaces for Figma responses
 interface FigmaResponse {
@@ -994,32 +1000,122 @@ server.tool(
 );
 
 // Export Node as Image Tool
+const EXPORT_DIR = path.join(homedir(), "Downloads", "figma-exports");
+// ponytail: inline previews only for small files. Bigger exports return the
+// path only, so agent context is not flooded with megabytes of base64.
+const INLINE_PREVIEW_LIMIT = 512 * 1024;
+
+function sanitizeFileName(nodeId: string) {
+  return nodeId.replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
 server.tool(
   "export_node_as_image",
-  "Export a node as an image from Figma",
+  "Export a Figma node to PNG, JPG, SVG or PDF and save it to disk. Returns the saved file path, plus an inline image when the export is small. IMPORTANT: the Figma window must be visible and unminimized, or Figma's raster exporter never resolves and the request times out (SVG still works when minimized). Figma's editor-only Detailed/Basic image resampling toggle is NOT exposed by the Plugin API; control output resolution with scale, width or height instead.",
   {
     nodeId: z.string().describe("The ID of the node to export"),
     format: z
-      .enum(["PNG", "JPG", "SVG", "PDF"])
+      .enum(["PNG", "JPG", "JPEG", "SVG", "PDF"])
       .optional()
-      .describe("Export format"),
-    scale: z.number().positive().optional().describe("Export scale"),
+      .describe("Export format. Defaults to PNG"),
+    scale: z
+      .number()
+      .positive()
+      .optional()
+      .describe("Multiplier on the node size. Defaults to 1. Ignored when width or height is given"),
+    width: z
+      .number()
+      .positive()
+      .optional()
+      .describe("Fixed output width in pixels. Takes precedence over scale"),
+    height: z
+      .number()
+      .positive()
+      .optional()
+      .describe("Fixed output height in pixels. Used when width is absent"),
+    suffix: z
+      .string()
+      .optional()
+      .describe("Suffix for the file name. PNG and JPG only"),
+    useAbsoluteBounds: z
+      .boolean()
+      .optional()
+      .describe("Export full node bounds instead of cropped/trimmed content. SVG and PDF only"),
+    outputPath: z
+      .string()
+      .optional()
+      .describe(
+        `Absolute path to write the export to. Defaults to ${EXPORT_DIR}`
+      ),
+    inlinePreview: z
+      .boolean()
+      .optional()
+      .describe(
+        `Attach the image inline when it is under ${INLINE_PREVIEW_LIMIT} bytes. Defaults to true`
+      ),
   },
-  async ({ nodeId, format, scale }: any) => {
+  async ({
+    nodeId,
+    format,
+    scale,
+    width,
+    height,
+    suffix,
+    useAbsoluteBounds,
+    outputPath,
+    inlinePreview,
+  }: any) => {
     try {
-      const result = await sendCommandToFigma("export_node_as_image", {
+      const result = (await sendCommandToFigma("export_node_as_image", {
         nodeId,
         format: format || "PNG",
-        scale: scale || 1,
-      });
-      const typedResult = result as { imageData: string; mimeType: string };
+        scale,
+        width,
+        height,
+        suffix,
+        useAbsoluteBounds,
+      })) as {
+        format: string;
+        extension: string;
+        mimeType: string;
+        encoding: "base64" | "utf8";
+        byteSize: number;
+        data: string;
+      };
+
+      const bytes =
+        result.encoding === "utf8"
+          ? Buffer.from(result.data, "utf8")
+          : Buffer.from(result.data, "base64");
+
+      const filePath = outputPath
+        ? path.resolve(outputPath)
+        : path.join(
+            EXPORT_DIR,
+            `${sanitizeFileName(nodeId)}${suffix || ""}.${result.extension}`
+          );
+
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, bytes);
+
+      const summary =
+        `Exported node ${nodeId} as ${result.format} (${bytes.byteLength} bytes) to:\n${filePath}`;
+
+      if (
+        inlinePreview === false ||
+        bytes.byteLength > INLINE_PREVIEW_LIMIT ||
+        (result.mimeType !== "image/png" && result.mimeType !== "image/jpeg")
+      ) {
+        return { content: [{ type: "text", text: summary }] };
+      }
 
       return {
         content: [
+          { type: "text", text: summary },
           {
             type: "image",
-            data: typedResult.imageData,
-            mimeType: typedResult.mimeType || "image/png",
+            data: result.data,
+            mimeType: result.mimeType,
           },
         ],
       };
@@ -1028,8 +1124,9 @@ server.tool(
         content: [
           {
             type: "text",
-            text: `Error exporting node as image: ${error instanceof Error ? error.message : String(error)
-              }`,
+            text: `Error exporting node as image: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
           },
         ],
       };
@@ -2947,8 +3044,12 @@ type CommandParams = {
   };
   export_node_as_image: {
     nodeId: string;
-    format?: "PNG" | "JPG" | "SVG" | "PDF";
+    format?: "PNG" | "JPG" | "JPEG" | "SVG" | "PDF";
     scale?: number;
+    width?: number;
+    height?: number;
+    suffix?: string;
+    useAbsoluteBounds?: boolean;
   };
   execute_code: {
     code: string;
@@ -3067,7 +3168,7 @@ function processFigmaNodeResponse(result: unknown): any {
 }
 
 // Update the connectToFigma function
-function connectToFigma(port: number = 3055) {
+function connectToFigma(port: number = RELAY_PORT) {
   // If already connected or connecting, do nothing. Creating a second socket
   // here can leave both clients joined to the stable channel and duplicate work.
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {

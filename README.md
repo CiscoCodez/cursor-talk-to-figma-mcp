@@ -234,7 +234,9 @@ The MCP server provides the following tools for interacting with Figma:
 
 ### Export & Advanced
 
-- `export_node_as_image` - Export a node as an image (PNG, JPG, SVG, or PDF) - limited support on image currently returning base64 as text
+- `export_node_as_image` - Export a node to PNG, JPG, SVG, or PDF and save it to disk (default `~/Downloads/figma-exports`). Accepts `format`, `scale`, `width`, `height`, `suffix`, `useAbsoluteBounds`, `outputPath`, and `inlinePreview`. Small exports are also returned inline as an image.
+- The Figma window must be visible and unminimized. Figma's raster exporter never resolves while the window is minimized, so PNG/JPG/PDF requests time out. SVG export still works when minimized, which makes it a quick way to tell "window is minimized" apart from a real failure.
+- Image resampling (`Detailed` / `Basic`) is an editor-only export panel control. It is not part of the Figma Plugin API's `ExportSettings`, so it cannot be selected from a plugin. Use `scale`, `width`, or `height` to control output resolution instead.
 
 ### Connection Management
 

@@ -72,6 +72,12 @@ const server = Bun.serve({
     });
   },
   websocket: {
+    // Headroom for large node exports. A 16 MiB/60 MiB payload survives the
+    // Bun default in 1.3.x, so this is not the fix for the old export timeouts;
+    // it just keeps multi-megabyte exports from getting close to the edge.
+    maxPayloadLength: Number(process.env.MAX_PAYLOAD_LENGTH || 256 * 1024 * 1024),
+    backpressureLimit: Number(process.env.MAX_PAYLOAD_LENGTH || 256 * 1024 * 1024),
+
     open(ws) {
       clientStates.set(ws, { channel: null, clientType: "unknown", joinedAt: 0 });
       ws.send(JSON.stringify({
