@@ -223,6 +223,12 @@ The MCP server provides the following tools for interacting with Figma:
 - `clone_node` - Create a copy of an existing node with optional position offset
 - `rename_node` - Rename a node
 - `set_parent` - Move a node into a new parent (section, frame or group), preserving its absolute position by default
+- `group_selection` - Group nodes into a Figma group (Ctrl+G), acting on the current selection unless `nodeIds` is given. When nodes span different parents they are lifted to their nearest shared ancestor first, matching Ctrl+G; the result reports `liftedToSharedParent`
+- `frame_selection` - Wrap nodes in a new Figma frame (Ctrl+Alt+G), acting on the current selection unless `nodeIds` is given
+- `ungroup` - Ungroup groups and frames, moving children up one level (Ctrl+Shift+G)
+- `undo` - Revert the most recent document-changing command issued through this plugin (read-only commands and hand edits in Figma are unaffected)
+
+> The plugin commits a checkpoint before every mutating command so `undo` has something to roll back to. Figma's plugin API exposes `triggerUndo()` and `commitUndo()` but no redo function, so redo cannot be driven from a plugin.
 
 ### Components & Styles
 

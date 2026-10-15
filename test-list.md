@@ -5,9 +5,41 @@ Automated coverage: `bun run test` (plugin handler, end-to-end MCP export, relay
 
 ## Pending - Solo
 
-_No pending manual tests._
+- [ ] **Group nodes that share a parent**
+  - Testers: 1
+  - Setup: A Figma page with two or more shapes sitting directly on the page, plus the plugin running and joined to a channel.
+  - Steps: Select the shapes, call `group_selection` with no `nodeIds`, then call `get_selection`.
+  - Expected: A group is created, `liftedToSharedParent` is false, no wrapper frame is created, and the group is the only selected node.
+
+- [ ] **Group nodes across different parents lifts them**
+  - Testers: 1
+  - Setup: A shape directly on the page, a group or card containing another shape, matching the Ctrl+G case already confirmed by hand.
+  - Steps: Select the page-level shape and the nested shape, call `group_selection`.
+  - Expected: The group forms at the shared ancestor exactly as Ctrl+G does, `liftedToSharedParent` is true, and the response names the ancestor the nodes moved to.
+
+- [ ] **Grouping when the shared ancestor is the page**
+  - Testers: 1
+  - Setup: Same cross-parent selection as above.
+  - Steps: Call `group_selection` and inspect the response.
+  - Expected: A `wrapperFrameId` is reported because a page cannot hold children, and the nodes are grouped inside that new frame with no visual shift.
+
+- [ ] **Frame selection wraps nodes without moving them**
+  - Testers: 1
+  - Setup: Two or more shapes with known positions, at differing nesting depths if possible.
+  - Steps: Select them, call `frame_selection`, then read the shapes' positions inside the new frame.
+  - Expected: The frame bounds match the selection's bounding box and every wrapped node stays at its original on-canvas position.
+
+- [ ] **Ungroup releases group and frame children**
+  - Testers: 1
+  - Setup: A group with at least two children, and a frame with at least two children.
+  - Steps: Select the group, call `ungroup`, then repeat for the frame with `nodeIds` set explicitly.
+  - Expected: Children move up to the former parent, the container is gone, `ungroupedCount` matches, and the released children are selected.
 
 ## Completed
+
+- [x] **Undo walks back through consecutive plugin edits**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-14. On a dedicated test page, three edits were made in order (square, circle, triangle). Three successive `undo` calls removed the triangle, then the circle, then the square, in reverse order. Repeated undo steps back through history rather than sticking at one step, confirming that checkpointing before each mutating command and excluding read-only commands and `undo` itself works as intended.
 
 - [x] **Export after long idle**
   - Testers: 1

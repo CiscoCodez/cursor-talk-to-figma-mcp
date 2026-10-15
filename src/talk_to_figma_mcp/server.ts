@@ -2902,7 +2902,11 @@ type FigmaCommand =
   | "set_image_fill"
   | "rename_node"
   | "create_section"
-  | "set_parent";
+  | "set_parent"
+  | "group_selection"
+  | "frame_selection"
+  | "ungroup"
+  | "undo";
 
 type CommandParams = {
   get_document_info: Record<string, never>;
@@ -3136,6 +3140,19 @@ type CommandParams = {
     y?: number;
     index?: number;
   };
+  group_selection: {
+    nodeIds?: string[];
+    name?: string;
+  };
+  frame_selection: {
+    nodeIds?: string[];
+    name?: string;
+    parentId?: string;
+  };
+  ungroup: {
+    nodeIds?: string[];
+  };
+  undo: Record<string, never>;
 
 };
 
@@ -3682,6 +3699,174 @@ server.tool(
             type: "text",
             text: `Error setting parent: ${error instanceof Error ? error.message : String(error)
               }`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Group Selection Tool
+server.tool(
+  "group_selection",
+  "Group nodes into a Figma group (same as Ctrl+G). Acts on the current selection unless nodeIds is given. WARNING: when the selected nodes do not all share the same parent, this LIFTS every node to their nearest shared ancestor container and groups them there, exactly as Ctrl+G does. That reparents nodes and can change the layer structure of the design. Only call this when you intend that change — e.g. a temporary grouping for export that you will undo — and avoid it when the current nesting is meaningful and must be preserved. The result reports liftedToSharedParent and wrapperFrameId so you can verify what happened.",
+  {
+    nodeIds: z
+      .array(z.string())
+      .optional()
+      .describe("Optional array of node IDs to group (default: the current selection)"),
+    name: z.string().optional().describe("Optional name for the resulting group"),
+  },
+  async ({ nodeIds, name }: any) => {
+    try {
+      const result = await sendCommandToFigma("group_selection", { nodeIds, name });
+      const typedResult = result as {
+        id: string;
+        name: string;
+        groupedNodeCount: number;
+        parentName?: string;
+        liftedToSharedParent?: boolean;
+        wrapperFrameId?: string | null;
+      };
+      const liftedNote = typedResult.liftedToSharedParent
+        ? ` Nodes were LIFTED to their nearest shared ancestor "${typedResult.parentName}", which changed their parent in the layer tree.`
+        : "";
+      const wrapperNote = typedResult.wrapperFrameId
+        ? ` The shared ancestor was the Page, so a wrapper frame (${typedResult.wrapperFrameId}) was created to hold the group.`
+        : "";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Grouped ${typedResult.groupedNodeCount} node(s) into group "${typedResult.name}" (${typedResult.id}) under "${typedResult.parentName}".${liftedNote}${wrapperNote}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error grouping selection: ${error instanceof Error ? error.message : String(error)
+              }`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Frame Selection Tool
+server.tool(
+  "frame_selection",
+  "Wrap nodes in a new Figma frame (same as Ctrl+Alt+G, 'Frame selection'). Acts on the current selection unless nodeIds is given",
+  {
+    nodeIds: z
+      .array(z.string())
+      .optional()
+      .describe("Optional array of node IDs to frame (default: the current selection)"),
+    name: z.string().optional().describe("Optional name for the resulting frame"),
+    parentId: z
+      .string()
+      .optional()
+      .describe("Optional ID of the parent to place the new frame in (default: the parent of the first node)"),
+  },
+  async ({ nodeIds, name, parentId }: any) => {
+    try {
+      const result = await sendCommandToFigma("frame_selection", { nodeIds, name, parentId });
+      const typedResult = result as {
+        id: string;
+        name: string;
+        width: number;
+        height: number;
+        framedNodeCount: number;
+      };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Wrapped ${typedResult.framedNodeCount} node(s) in frame "${typedResult.name}" (${typedResult.id}) sized ${typedResult.width}x${typedResult.height}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error framing selection: ${error instanceof Error ? error.message : String(error)
+              }`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Ungroup Tool
+server.tool(
+  "ungroup",
+  "Ungroup groups and frames, moving their children up one level (same as Ctrl+Shift+G). Acts on the current selection unless nodeIds is given",
+  {
+    nodeIds: z
+      .array(z.string())
+      .optional()
+      .describe("Optional array of node IDs to ungroup (default: the current selection)"),
+  },
+  async ({ nodeIds }: any) => {
+    try {
+      const result = await sendCommandToFigma("ungroup", { nodeIds });
+      const typedResult = result as {
+        ungroupedCount: number;
+        totalNodes: number;
+      };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+          {
+            type: "text",
+            text: `Ungrouped ${typedResult.ungroupedCount} of ${typedResult.totalNodes} node(s)`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error ungrouping: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// Undo Tool
+server.tool(
+  "undo",
+  "Trigger an undo in Figma. Reverts the most recent document-changing command issued through this plugin. Read-only commands and hand edits made in Figma are not affected, and Figma's plugin API offers no redo.",
+  {},
+  async () => {
+    try {
+      const result = await sendCommandToFigma("undo");
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result),
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Error triggering undo: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
       };

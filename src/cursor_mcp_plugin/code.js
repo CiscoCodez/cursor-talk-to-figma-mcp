@@ -70,6 +70,28 @@ figma.showUI(__html__, {
 const commandQueue = [];
 let processingCommand = false;
 
+// Read-only commands never change the document. Committing a checkpoint before
+// one of these would overwrite the restore point that `undo` needs to roll back
+// to, so they are deliberately excluded.
+const READ_ONLY_COMMANDS = new Set([
+  "get_document_info",
+  "get_selection",
+  "get_node_info",
+  "get_nodes_info",
+  "read_my_design",
+  "get_styles",
+  "get_local_components",
+  "get_instance_overrides",
+  "list_available_fonts",
+  "get_annotations",
+  "get_reactions",
+  "scan_text_nodes",
+  "scan_nodes_by_types",
+  "export_node_as_image",
+  "join",
+  "undo",
+]);
+
 async function processCommandQueue() {
   if (processingCommand) return;
   processingCommand = true;
@@ -89,6 +111,12 @@ async function processCommandQueue() {
     }, 15000);
 
     try {
+      // Mark the current document state as a restore point before mutating it,
+      // so `undo` rolls back the command that is about to run. Committing after
+      // the command instead would checkpoint the change and undo nothing.
+      if (!READ_ONLY_COMMANDS.has(msg.command)) {
+        figma.commitUndo();
+      }
       const result = await handleCommand(msg.command, msg.params);
       figma.ui.postMessage({ type: "command-result", id: msg.id, result });
     } catch (error) {
@@ -320,6 +348,14 @@ async function handleCommand(command, params) {
       return await createSection(params);
     case "set_parent":
       return await setParent(params);
+    case "group_selection":
+      return await groupSelection(params);
+    case "frame_selection":
+      return await frameSelection(params);
+    case "ungroup":
+      return await ungroupNodes(params);
+    case "undo":
+      return await undoLastAction();
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -1447,6 +1483,311 @@ async function setParent(params) {
     x: "x" in node ? node.x : undefined,
     y: "y" in node ? node.y : undefined,
     index: parentNode.children.indexOf(node),
+  };
+}
+
+// Resolve the nodes an operation should act on: explicit nodeIds when given,
+// otherwise whatever is currently selected on the page.
+async function resolveTargetNodes(params) {
+  const { nodeIds } = params || {};
+
+  if (Array.isArray(nodeIds) && nodeIds.length > 0) {
+    const nodes = [];
+    for (const id of nodeIds) {
+      const node = await figma.getNodeByIdAsync(id);
+      if (!node) {
+        throw new Error(`Node not found with ID: ${id}`);
+      }
+      nodes.push(node);
+    }
+    return nodes;
+  }
+
+  await figma.currentPage.loadAsync();
+  const selection = figma.currentPage.selection;
+  if (selection.length === 0) {
+    throw new Error("No nodes selected. Select nodes in Figma or pass nodeIds.");
+  }
+  return selection;
+}
+
+async function groupSelection(params) {
+  const nodes = await resolveTargetNodes(params);
+
+  const parent = nodes[0].parent;
+  if (!parent || !("appendChild" in parent)) {
+    throw new Error("Selected nodes have no parent that can hold a group");
+  }
+
+  const shareParent = nodes.every((node) => node.parent && node.parent.id === parent.id);
+  let container = parent;
+  let wrapperId = null;
+  let lifted = false;
+
+  if (!shareParent) {
+    // Match Ctrl+G: lift every node to the nearest container that holds all of
+    // them, then group there. This reparents nodes and can change the layer tree.
+    const ancestor = findNearestSharedAncestor(nodes);
+    if (!ancestor) {
+      throw new Error("Selected nodes have no shared parent to group under");
+    }
+
+    if ("appendChild" in ancestor) {
+      container = ancestor;
+    } else {
+      // The shared ancestor is the Page, which cannot hold children. Wrap the
+      // selection in a frame so the group has somewhere to live.
+      const bounds = absoluteBounds(nodes);
+      const wrapper = figma.createFrame();
+      figma.currentPage.appendChild(wrapper);
+      wrapper.name = "Group Container";
+      wrapper.resize(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+      wrapper.x = bounds.minX;
+      wrapper.y = bounds.minY;
+      container = wrapper;
+      wrapperId = wrapper.id;
+    }
+
+    const containerX = "absoluteTransform" in container ? container.absoluteTransform[0][2] : 0;
+    const containerY = "absoluteTransform" in container ? container.absoluteTransform[1][2] : 0;
+
+    for (const node of nodes) {
+      if (!("x" in node) || !("y" in node)) {
+        continue;
+      }
+      const absoluteX = "absoluteTransform" in node ? node.absoluteTransform[0][2] : node.x;
+      const absoluteY = "absoluteTransform" in node ? node.absoluteTransform[1][2] : node.y;
+      container.appendChild(node);
+      node.x = absoluteX - containerX;
+      node.y = absoluteY - containerY;
+    }
+    lifted = true;
+  }
+
+  const siblings = container.children;
+  const indexes = nodes.map((node) => siblings.indexOf(node));
+  if (indexes.some((index) => index < 0)) {
+    throw new Error("Nodes could not be placed under a shared parent to group");
+  }
+
+  const group = figma.group(nodes, container, Math.min(...indexes));
+  group.name = (params && params.name) || "Group";
+
+  figma.currentPage.selection = [group];
+
+  return {
+    success: true,
+    id: group.id,
+    name: group.name,
+    type: group.type,
+    parentId: container.id,
+    parentName: container.name,
+    groupedNodeIds: nodes.map((node) => node.id),
+    groupedNodeCount: nodes.length,
+    liftedToSharedParent: lifted,
+    wrapperFrameId: wrapperId,
+    x: group.x,
+    y: group.y,
+    width: group.width,
+    height: group.height,
+  };
+}
+
+function isDescendantOf(node, ancestor) {
+  let current = node.parent;
+  while (current) {
+    if (current.id === ancestor.id) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function findNearestSharedAncestor(nodes) {
+  let candidate = nodes[0].parent;
+  while (candidate) {
+    if (nodes.every((node) => node.id === candidate.id || isDescendantOf(node, candidate))) {
+      return candidate;
+    }
+    candidate = candidate.parent;
+  }
+  return null;
+}
+
+function absoluteBounds(nodes) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const node of nodes) {
+    const box = node.absoluteBoundingBox;
+    if (!box) {
+      throw new Error(`Node ${node.id} has no bounding box`);
+    }
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width);
+    maxY = Math.max(maxY, box.y + box.height);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+async function frameSelection(params) {
+  const { name, parentId } = params || {};
+  const nodes = await resolveTargetNodes(params);
+
+  // Frame bounds follow the selection's absolute bounding box.
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const absolutePositions = nodes.map((node) => {
+    if (!("absoluteBoundingBox" in node) || !node.absoluteBoundingBox) {
+      throw new Error(`Node ${node.id} has no bounding box and cannot be framed`);
+    }
+    const box = node.absoluteBoundingBox;
+    minX = Math.min(minX, box.x);
+    minY = Math.min(minY, box.y);
+    maxX = Math.max(maxX, box.x + box.width);
+    maxY = Math.max(maxY, box.y + box.height);
+    return {
+      node,
+      x: "absoluteTransform" in node ? node.absoluteTransform[0][2] : box.x,
+      y: "absoluteTransform" in node ? node.absoluteTransform[1][2] : box.y,
+    };
+  });
+
+  let container = parentId ? await figma.getNodeByIdAsync(parentId) : nodes[0].parent;
+  if (!container) {
+    throw new Error(`Parent node not found with ID: ${parentId}`);
+  }
+  if (!("appendChild" in container)) {
+    throw new Error(`Parent node does not support children: ${container.id}`);
+  }
+
+  const containerX = "absoluteTransform" in container ? container.absoluteTransform[0][2] : 0;
+  const containerY = "absoluteTransform" in container ? container.absoluteTransform[1][2] : 0;
+
+  const frame = figma.createFrame();
+  container.appendChild(frame);
+  frame.name = name || "Frame";
+  frame.resize(maxX - minX, maxY - minY);
+  frame.x = minX - containerX;
+  frame.y = minY - containerY;
+
+  // appendChild does not preserve absolute placement, so restore it explicitly.
+  const frameX = "absoluteTransform" in frame ? frame.absoluteTransform[0][2] : frame.x;
+  const frameY = "absoluteTransform" in frame ? frame.absoluteTransform[1][2] : frame.y;
+  for (const entry of absolutePositions) {
+    if ("x" in entry.node) {
+      entry.node.x = entry.x - frameX;
+    }
+    if ("y" in entry.node) {
+      entry.node.y = entry.y - frameY;
+    }
+  }
+
+  figma.currentPage.selection = [frame];
+
+  return {
+    success: true,
+    id: frame.id,
+    name: frame.name,
+    type: frame.type,
+    parentId: container.id,
+    parentName: container.name,
+    framedNodeIds: nodes.map((node) => node.id),
+    framedNodeCount: nodes.length,
+    x: frame.x,
+    y: frame.y,
+    width: frame.width,
+    height: frame.height,
+  };
+}
+
+async function ungroupNodes(params) {
+  const { nodeIds } = params || {};
+  const ids = Array.isArray(nodeIds) && nodeIds.length > 0
+    ? nodeIds
+    : (await figma.currentPage.loadAsync(), figma.currentPage.selection.map((node) => node.id));
+
+  if (ids.length === 0) {
+    throw new Error("No nodes selected. Select a group or frame in Figma or pass nodeIds.");
+  }
+
+  const results = [];
+  const released = [];
+
+  for (const id of ids) {
+    const node = await figma.getNodeByIdAsync(id);
+    if (!node) {
+      results.push({ success: false, id, error: `Node not found with ID: ${id}` });
+      continue;
+    }
+
+    if (!("children" in node) || node.children.length === 0) {
+      results.push({
+        success: false,
+        id,
+        name: node.name,
+        type: node.type,
+        error: "Node has no children to ungroup",
+      });
+      continue;
+    }
+
+    try {
+      const children = figma.ungroup(node);
+      released.push(...children);
+      results.push({
+        success: true,
+        id,
+        name: node.name,
+        type: node.type,
+        releasedChildCount: children.length,
+        releasedChildIds: children.map((child) => child.id),
+      });
+    } catch (error) {
+      results.push({
+        success: false,
+        id,
+        name: node.name,
+        type: node.type,
+        error: error.message || "Figma refused to ungroup this node",
+      });
+    }
+  }
+
+  if (released.length > 0) {
+    figma.currentPage.selection = released;
+  }
+
+  const successCount = results.filter((result) => result.success).length;
+
+  return {
+    success: successCount > 0,
+    ungroupedCount: successCount,
+    totalNodes: ids.length,
+    results,
+    ungroupedNodes: released.map((node) => ({
+      id: node.id,
+      name: node.name,
+      type: node.type,
+      parentId: node.parent ? node.parent.id : undefined,
+    })),
+  };
+}
+
+async function undoLastAction() {
+  // Figma exposes no redo equivalent. triggerUndo reverts to the commitUndo()
+  // checkpoint taken immediately before the last mutating command.
+  figma.triggerUndo();
+
+  return {
+    success: true,
+    message:
+      "Undo triggered, reverting the most recent document-changing plugin command. This is the plugin's own history and does not affect edits you made in Figma by hand.",
   };
 }
 
