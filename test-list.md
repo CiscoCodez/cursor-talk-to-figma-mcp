@@ -10,36 +10,47 @@ Automated coverage: `bun run test` (plugin handler, end-to-end MCP export, relay
   - Setup: A Figma page with two or more shapes sitting directly on the page, plus the plugin running and joined to a channel.
   - Steps: Select the shapes, call `group_selection` with no `nodeIds`, then call `get_selection`.
   - Expected: A group is created, `liftedToSharedParent` is false, no wrapper frame is created, and the group is the only selected node.
+  - Agent-run 2026-10-15: passed with explicit IDs (no lifting, group sole selection) and cross-parent selection-driven. Awaiting owner confirmation.
 
 - [ ] **Group nodes across different parents lifts them**
   - Testers: 1
   - Setup: A shape directly on the page, a group or card containing another shape, matching the Ctrl+G case already confirmed by hand.
   - Steps: Select the page-level shape and the nested shape, call `group_selection`.
   - Expected: The group forms at the shared ancestor exactly as Ctrl+G does, `liftedToSharedParent` is true, and the response names the ancestor the nodes moved to.
+  - Agent-run 2026-10-15: passed. Selection-driven call lifted a nested node and a page-level node into a group under the page, former parent left empty, absolute positions unchanged, group became the sole selection. Awaiting owner confirmation.
 
 - [ ] **Grouping when the shared ancestor is the page**
   - Testers: 1
-  - Setup: Same cross-parent selection as above.
-  - Steps: Call `group_selection` and inspect the response.
-  - Expected: A `wrapperFrameId` is reported because a page cannot hold children, and the nodes are grouped inside that new frame with no visual shift.
+  - Setup: Two shapes in sibling frames, or a page-level shape plus a nested one.
+  - Steps: Select both, call `group_selection`, then inspect the resulting group and both former parents.
+  - Expected: The group forms directly under the page, the nodes are lifted into it with no visual shift, and both former parents are left empty. No wrapper frame is created: the 2026-10-15 live run showed `figma.currentPage` accepts children, so the earlier wrapper requirement was based on a wrong assumption.
+  - Agent-run 2026-10-15: passed. Group formed directly under the page with no wrapper, both former parents emptied. Awaiting owner confirmation.
 
 - [ ] **Frame selection wraps nodes without moving them**
   - Testers: 1
   - Setup: Two or more shapes with known positions, at differing nesting depths if possible.
   - Steps: Select them, call `frame_selection`, then read the shapes' positions inside the new frame.
   - Expected: The frame bounds match the selection's bounding box and every wrapped node stays at its original on-canvas position.
+  - Agent-run 2026-10-15: passed for same-parent and cross-parent selections, and for the selection-driven path with no `nodeIds`. Awaiting owner confirmation.
+
+- [ ] **frame_selection places the new frame in the first node's parent**
+  - Testers: 1
+  - Setup: Two shapes in sibling frames, so their nearest shared ancestor is the page.
+  - Steps: Call `frame_selection` on both, then inspect where the new frame landed.
+  - Expected: Currently lands inside the parent of the first node, so it can overflow that parent, whereas Ctrl+Alt+G would use the shared ancestor. Decide whether to align with `group_selection`, which uses the nearest shared ancestor.
 
 - [ ] **Ungroup releases group and frame children**
   - Testers: 1
   - Setup: A group with at least two children, and a frame with at least two children.
   - Steps: Select the group, call `ungroup`, then repeat for the frame with `nodeIds` set explicitly.
   - Expected: Children move up to the former parent, the container is gone, `ungroupedCount` matches, and the released children are selected.
+  - Agent-run 2026-10-15: passed for a two-child frame and a two-child group. Clean `success:true`, correct `ungroupedCount` and `releasedChildCount`, children returned to the former parent and both became selected. Awaiting owner confirmation.
 
 ## Completed
 
 - [x] **Undo walks back through consecutive plugin edits**
   - Testers: 1
-  - Result: Passed manually on 2026-10-14. On a dedicated test page, three edits were made in order (square, circle, triangle). Three successive `undo` calls removed the triangle, then the circle, then the square, in reverse order. Repeated undo steps back through history rather than sticking at one step, confirming that checkpointing before each mutating command and excluding read-only commands and `undo` itself works as intended.
+  - Result: Passed manually on 2026-10-15. On an empty page, a square, a circle and a rectangle were created in order, then `undo` was called three times. Each call removed exactly one shape, in reverse order: rectangle, then circle, then square. This confirmed the corrected checkpoint placement, after each successful mutation rather than before.
 
 - [x] **Export after long idle**
   - Testers: 1

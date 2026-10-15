@@ -3709,7 +3709,7 @@ server.tool(
 // Group Selection Tool
 server.tool(
   "group_selection",
-  "Group nodes into a Figma group (same as Ctrl+G). Acts on the current selection unless nodeIds is given. WARNING: when the selected nodes do not all share the same parent, this LIFTS every node to their nearest shared ancestor container and groups them there, exactly as Ctrl+G does. That reparents nodes and can change the layer structure of the design. Only call this when you intend that change — e.g. a temporary grouping for export that you will undo — and avoid it when the current nesting is meaningful and must be preserved. The result reports liftedToSharedParent and wrapperFrameId so you can verify what happened.",
+  "Group nodes into a Figma group (same as Ctrl+G). Acts on the current selection unless nodeIds is given. WARNING: when the selected nodes do not all share the same parent, this LIFTS every node to their nearest shared ancestor container and groups them there, exactly as Ctrl+G does. That reparents nodes and can change the layer structure of the design. Only call this when you intend that change — e.g. a temporary grouping for export that you will undo — and avoid it when the current nesting is meaningful and must be preserved. The result reports liftedToSharedParent so you can verify what happened.",
   {
     nodeIds: z
       .array(z.string())

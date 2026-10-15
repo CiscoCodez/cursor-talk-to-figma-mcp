@@ -206,7 +206,13 @@ async function main() {
         assert.ok(props.includes(p), `missing param ${p}`);
       }
       assert.ok(/JPEG/.test(JSON.stringify(tool.inputSchema)), "JPEG not accepted");
-      assert.ok(/Detailed/.test(tool.description), "resampling limitation not stated");
+      // c0d283c replaced the old "Detailed resampling" warning: code-driven
+      // exportAsync samples image fills with nearest-neighbour, so exports stay
+      // sharp and agents must not be told otherwise. Assert the corrected text.
+      assert.ok(
+        /nearest-neighbour/.test(tool.description) && /Do not warn/.test(tool.description),
+        "resampling behaviour not stated correctly"
+      );
     });
 
     await joinWithRetry(mcp);

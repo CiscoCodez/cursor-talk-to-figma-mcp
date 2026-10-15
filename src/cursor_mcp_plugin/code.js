@@ -111,13 +111,14 @@ async function processCommandQueue() {
     }, 15000);
 
     try {
-      // Mark the current document state as a restore point before mutating it,
-      // so `undo` rolls back the command that is about to run. Committing after
-      // the command instead would checkpoint the change and undo nothing.
+      const result = await handleCommand(msg.command, msg.params);
+      // Commit only AFTER a successful mutation: commitUndo() commits the
+      // changes made so far, so this leaves the newest command uncommitted and
+      // therefore undoable. Committing beforehand rolls back one command too
+      // many, deleting an extra node.
       if (!READ_ONLY_COMMANDS.has(msg.command)) {
         figma.commitUndo();
       }
-      const result = await handleCommand(msg.command, msg.params);
       figma.ui.postMessage({ type: "command-result", id: msg.id, result });
     } catch (error) {
       figma.ui.postMessage({
@@ -1680,6 +1681,7 @@ async function frameSelection(params) {
   const frameX = "absoluteTransform" in frame ? frame.absoluteTransform[0][2] : frame.x;
   const frameY = "absoluteTransform" in frame ? frame.absoluteTransform[1][2] : frame.y;
   for (const entry of absolutePositions) {
+    frame.appendChild(entry.node);
     if ("x" in entry.node) {
       entry.node.x = entry.x - frameX;
     }
@@ -1689,6 +1691,14 @@ async function frameSelection(params) {
   }
 
   figma.currentPage.selection = [frame];
+
+  const framed = frame.children.map((child) => child.id);
+  const missing = nodes.filter((node) => !framed.includes(node.id)).map((node) => node.id);
+  if (missing.length > 0) {
+    throw new Error(
+      `Frame ${frame.id} was created but did not take ${missing.length} node(s): ${missing.join(", ")}`
+    );
+  }
 
   return {
     success: true,
@@ -1737,23 +1747,23 @@ async function ungroupNodes(params) {
       continue;
     }
 
+    // Cache identifying data before ungrouping: the node is removed by the call
+    // itself, so reading any property afterwards throws "node does not exist".
+    const cached = { id: node.id, name: node.name, type: node.type };
+
     try {
       const children = figma.ungroup(node);
       released.push(...children);
       results.push({
         success: true,
-        id,
-        name: node.name,
-        type: node.type,
+        ...cached,
         releasedChildCount: children.length,
         releasedChildIds: children.map((child) => child.id),
       });
     } catch (error) {
       results.push({
         success: false,
-        id,
-        name: node.name,
-        type: node.type,
+        ...cached,
         error: error.message || "Figma refused to ungroup this node",
       });
     }
@@ -1780,8 +1790,8 @@ async function ungroupNodes(params) {
 }
 
 async function undoLastAction() {
-  // Figma exposes no redo equivalent. triggerUndo reverts to the commitUndo()
-  // checkpoint taken immediately before the last mutating command.
+  // Figma exposes no redo equivalent. triggerUndo reverts to the last
+  // commitUndo() checkpoint, i.e. drops the most recent mutating command.
   figma.triggerUndo();
 
   return {
