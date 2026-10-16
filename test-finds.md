@@ -13,11 +13,11 @@
 
 ## Session Summary
 
-- Overall: In progress
-- Passed: Undo walks back through consecutive plugin edits (owner-verified 2026-10-15); frame selection now wraps nodes; ungroup now returns success; `set_parent` preserves absolute position without coordinates.
-- Failed: None outstanding. Earlier failures FIND-005, FIND-006 and FIND-009 are fixed in source; FIND-005, FIND-006 and FIND-009 were retested.
+- Overall: Passed for the grouping toolset; one unrelated item still open.
+- Passed: Undo walks back through consecutive plugin edits (owner-verified 2026-10-15); frame selection wraps nodes, including cross-parent and selection-driven; ungroup returns success and selects released children; `set_parent` preserves absolute position without coordinates; grouping lifts cross-parent selections to the nearest shared ancestor; frame selection placement is order-independent.
+- Failed: None outstanding. FIND-005, FIND-006, FIND-009 and FIND-011 are fixed and verified live.
 - Blocked: None
-- Notes: A retest on 2026-10-15 verified the frame-selection and ungroup fixes live, cleared FIND-007 as a false positive caused by the empty-frame bug, and uncovered FIND-009, an undo checkpoint misplacement that deleted extra nodes. Remaining pending items in `test-list.md` still need owner sign-off before they are checked off.
+- Notes: FIND-010, the "Must join a channel before sending commands" error, remains open and uninvestigated. Remaining pending items in `test-list.md` still need owner sign-off before they are checked off.
 
 ## Findings
 
@@ -100,21 +100,21 @@
 ### FIND-011 - frame_selection places the new frame in the first node's parent
 
 - Related test: frame_selection places the new frame in the first node's parent.
-- Result: Observation; inconsistency between two tools.
-- Severity: Low - only reachable when the selection spans different parents.
-- Reproducible: Yep.
+- Result: Confirmed. Placement depends on argument order, not on anything intrinsic to the nodes.
+- Severity: Medium - the outcome is arbitrary and silent.
+- Reproducible: Yep, twice with opposite results from the same pair of shapes.
 - Environment: Live Figma document, channel `figma`, page `0:1`.
 - Context before finding: Cross-parent framing retest, with one rectangle in `Host A` and one ellipse in `Host B`.
 - Steps to reproduce:
   1. Put one shape in each of two sibling frames.
-  2. Call `frame_selection` on both shapes.
-  3. Inspect where the resulting frame was created.
-- Expected: Consistent with `group_selection`, which resolves to the nearest shared ancestor.
-- Actual: The new frame was created inside `Host A`, the parent of the first node, rather than at the shared ancestor. At 260x60 it overflowed its 150x100 host. Wrapping itself succeeded and both shapes kept their absolute positions.
-- Evidence / attachments: `Host A` reported `children: ["37:43"]` where `37:43` was the new 260x60 frame; `Host B` reported `children: []`.
-- Probable cause: `frameSelection` defaults its container to `nodes[0].parent`, whereas `groupSelection` walks up to the nearest shared ancestor. The two tools resolve placement differently.
-- Status: Open, awaiting an owner decision. No change made, since either behaviour is defensible and changing it requires another reload and retest.
-- Retest result: Not applicable.
+  2. Call `frame_selection` with the ellipse id first and the rectangle id second.
+  3. Inspect both hosts.
+- Expected: Consistent with `group_selection`, which resolves to the nearest shared ancestor regardless of order.
+- Actual: The new frame was created inside `Host B`, the parent of the *first id in the array*, leaving `Host A` empty. In the earlier run the same two shapes were passed in the opposite order and the frame landed in `Host A`. Identical inputs, opposite outcomes, determined purely by array order.
+- Evidence / attachments: `Host B` (`42:3`) reported `children: ["42:6"]`; `Host A` (`42:2`) reported `children: []`. The frame was 260x60 inside a 150x100 host, so it overflowed.
+- Probable cause: `frameSelection` sets its container to `nodes[0].parent`. `nodes` is whatever `resolveTargetNodes` returned: the caller's `nodeIds` in the order supplied, or `figma.currentPage.selection` in Figma's internal order when `nodeIds` is omitted. Neither is layers-panel order nor top-most; both are effectively arbitrary from the caller's point of view. `groupSelection` by contrast walks up to the nearest shared ancestor, so its result is order-independent.
+- Status: Fixed and verified. `frameSelection` now resolves its container the same way `groupSelection` does: an explicit `parentId` wins, otherwise the shared parent when the nodes already share one, otherwise the nearest shared ancestor. `findNearestSharedAncestor` was reused.
+- Retest result: Passed on 2026-10-15 after a plugin reload. Four cases verified: ellipse-first and rectangle-first both produced a frame directly under the page with both shapes inside at unchanged absolute positions and both hosts emptied, proving order-independence; `parentId` placed the frame inside the named host instead; same-parent input kept the new frame inside the shared parent rather than lifting it.
 
 ## Retest Log
 
@@ -296,7 +296,7 @@ All five pending items remain unchecked. Existing completed tests and the origin
 | FIND-008 | Runtime revision unknown | 2026-10-15 | Observation | Empty-frame ungroup rejected without removal. |
 | FIND-009 | commitUndo-after build | 2026-10-15 | Pass | Was two commands per undo; owner confirmed one after the fix. |
 | FIND-010 | Runtime revision unknown | 2026-10-15 | Observation | Channel-lost error; cleared by plugin restart; not reproduced. |
-| FIND-011 | Fixed build | 2026-10-15 | Observation | frame_selection and group_selection resolve placement differently. |
+| FIND-011 | Fixed build | 2026-10-15 | Pass | Order-independent across both input orders; parentId override and same-parent branch both correct. |
 
 ## Final Canvas State and Handoff
 

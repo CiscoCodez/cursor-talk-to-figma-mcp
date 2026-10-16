@@ -3759,7 +3759,7 @@ server.tool(
 // Frame Selection Tool
 server.tool(
   "frame_selection",
-  "Wrap nodes in a new Figma frame (same as Ctrl+Alt+G, 'Frame selection'). Acts on the current selection unless nodeIds is given",
+  "Wrap nodes in a new Figma frame (same as Ctrl+Alt+G, 'Frame selection'). Acts on the current selection unless nodeIds is given. When the selected nodes do not all share the same parent, the frame is created in their nearest shared ancestor container, exactly as Ctrl+Alt+G does. Pass parentId to choose the container explicitly.",
   {
     nodeIds: z
       .array(z.string())
@@ -3769,7 +3769,7 @@ server.tool(
     parentId: z
       .string()
       .optional()
-      .describe("Optional ID of the parent to place the new frame in (default: the parent of the first node)"),
+      .describe("Optional ID of the parent to place the new frame in (default: the nearest shared ancestor of the selected nodes)"),
   },
   async ({ nodeIds, name, parentId }: any) => {
     try {
@@ -3780,12 +3780,18 @@ server.tool(
         width: number;
         height: number;
         framedNodeCount: number;
+        parentName?: string;
+        liftedToSharedParent?: boolean;
       };
+      const parentNote = typedResult.parentName ? ` under "${typedResult.parentName}"` : "";
+      const liftedNote = typedResult.liftedToSharedParent
+        ? ` The nodes did not share a parent, so the frame was created in their nearest shared ancestor${parentNote}.`
+        : "";
       return {
         content: [
           {
             type: "text",
-            text: `Wrapped ${typedResult.framedNodeCount} node(s) in frame "${typedResult.name}" (${typedResult.id}) sized ${typedResult.width}x${typedResult.height}`,
+            text: `Wrapped ${typedResult.framedNodeCount} node(s) in frame "${typedResult.name}" (${typedResult.id}) sized ${typedResult.width}x${typedResult.height}${parentNote}.${liftedNote}`,
           },
         ],
       };

@@ -33,12 +33,6 @@ Automated coverage: `bun run test` (plugin handler, end-to-end MCP export, relay
   - Expected: The frame bounds match the selection's bounding box and every wrapped node stays at its original on-canvas position.
   - Agent-run 2026-10-15: passed for same-parent and cross-parent selections, and for the selection-driven path with no `nodeIds`. Awaiting owner confirmation.
 
-- [ ] **frame_selection places the new frame in the first node's parent**
-  - Testers: 1
-  - Setup: Two shapes in sibling frames, so their nearest shared ancestor is the page.
-  - Steps: Call `frame_selection` on both, then inspect where the new frame landed.
-  - Expected: Currently lands inside the parent of the first node, so it can overflow that parent, whereas Ctrl+Alt+G would use the shared ancestor. Decide whether to align with `group_selection`, which uses the nearest shared ancestor.
-
 - [ ] **Ungroup releases group and frame children**
   - Testers: 1
   - Setup: A group with at least two children, and a frame with at least two children.
@@ -47,6 +41,10 @@ Automated coverage: `bun run test` (plugin handler, end-to-end MCP export, relay
   - Agent-run 2026-10-15: passed for a two-child frame and a two-child group. Clean `success:true`, correct `ungroupedCount` and `releasedChildCount`, children returned to the former parent and both became selected. Awaiting owner confirmation.
 
 ## Completed
+
+- [x] **frame_selection resolves placement like group_selection**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-15. With one shape in each of two sibling frames, calling `frame_selection` produced a frame directly under the page in both input orders, with both shapes inside at unchanged absolute positions and both hosts emptied, proving the outcome no longer depends on argument order. Passing `parentId` placed the frame inside the named host instead, and a same-parent selection kept the new frame inside the shared parent rather than lifting it.
 
 - [x] **Undo walks back through consecutive plugin edits**
   - Testers: 1

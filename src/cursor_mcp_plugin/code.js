@@ -1659,10 +1659,25 @@ async function frameSelection(params) {
     };
   });
 
-  let container = parentId ? await figma.getNodeByIdAsync(parentId) : nodes[0].parent;
-  if (!container) {
-    throw new Error(`Parent node not found with ID: ${parentId}`);
+  // An explicit parentId always wins. Otherwise resolve the container the same way
+// groupSelection does: the shared parent when the nodes already share one, or
+// the nearest shared ancestor when they do not. Using nodes[0].parent instead
+// would make placement depend on argument order and can overflow that parent.
+let container;
+  if (parentId) {
+    container = await figma.getNodeByIdAsync(parentId);
+    if (!container) {
+      throw new Error(`Parent node not found with ID: ${parentId}`);
+    }
+  } else if (nodes.every((node) => node.parent && node.parent.id === nodes[0].parent.id)) {
+    container = nodes[0].parent;
+  } else {
+    container = findNearestSharedAncestor(nodes);
+    if (!container) {
+      throw new Error("Selected nodes have no shared parent to frame under");
+    }
   }
+
   if (!("appendChild" in container)) {
     throw new Error(`Parent node does not support children: ${container.id}`);
   }
@@ -1709,6 +1724,10 @@ async function frameSelection(params) {
     parentName: container.name,
     framedNodeIds: nodes.map((node) => node.id),
     framedNodeCount: nodes.length,
+    liftedToSharedParent:
+      !parentId && nodes.every((node) => node.parent && node.parent.id === nodes[0].parent.id)
+        ? false
+        : !parentId,
     x: frame.x,
     y: frame.y,
     width: frame.width,
