@@ -5,44 +5,27 @@ Automated coverage: `bun run test` (plugin handler, end-to-end MCP export, relay
 
 ## Pending - Solo
 
-- [ ] **Group nodes that share a parent**
-  - Testers: 1
-  - Setup: A Figma page with two or more shapes sitting directly on the page, plus the plugin running and joined to a channel.
-  - Steps: Select the shapes, call `group_selection` with no `nodeIds`, then call `get_selection`.
-  - Expected: A group is created, `liftedToSharedParent` is false, no wrapper frame is created, and the group is the only selected node.
-  - Agent-run 2026-10-15: passed with explicit IDs (no lifting, group sole selection) and cross-parent selection-driven. Awaiting owner confirmation.
-
-- [ ] **Group nodes across different parents lifts them**
-  - Testers: 1
-  - Setup: A shape directly on the page, a group or card containing another shape, matching the Ctrl+G case already confirmed by hand.
-  - Steps: Select the page-level shape and the nested shape, call `group_selection`.
-  - Expected: The group forms at the shared ancestor exactly as Ctrl+G does, `liftedToSharedParent` is true, and the response names the ancestor the nodes moved to.
-  - Agent-run 2026-10-15: passed. Selection-driven call lifted a nested node and a page-level node into a group under the page, former parent left empty, absolute positions unchanged, group became the sole selection. Awaiting owner confirmation.
-
-- [ ] **Grouping when the shared ancestor is the page**
-  - Testers: 1
-  - Setup: Two shapes in sibling frames, or a page-level shape plus a nested one.
-  - Steps: Select both, call `group_selection`, then inspect the resulting group and both former parents.
-  - Expected: The group forms directly under the page, the nodes are lifted into it with no visual shift, and both former parents are left empty. No wrapper frame is created: the 2026-10-15 live run showed `figma.currentPage` accepts children, so the earlier wrapper requirement was based on a wrong assumption.
-  - Agent-run 2026-10-15: passed. Group formed directly under the page with no wrapper, both former parents emptied. Awaiting owner confirmation.
-
-- [ ] **Frame selection wraps nodes without moving them**
-  - Testers: 1
-  - Setup: Two or more shapes with known positions, at differing nesting depths if possible.
-  - Steps: Select them, call `frame_selection`, then read the shapes' positions inside the new frame.
-  - Expected: The frame bounds match the selection's bounding box and every wrapped node stays at its original on-canvas position.
-  - Agent-run 2026-10-15: passed for same-parent and cross-parent selections, and for the selection-driven path with no `nodeIds`. Awaiting owner confirmation.
-
-- [ ] **Ungroup releases group and frame children**
-  - Testers: 1
-  - Setup: A group with at least two children, and a frame with at least two children.
-  - Steps: Select the group, call `ungroup`, then repeat for the frame with `nodeIds` set explicitly.
-  - Expected: Children move up to the former parent, the container is gone, `ungroupedCount` matches, and the released children are selected.
-  - Agent-run 2026-10-15: passed for a two-child frame and a two-child group. Clean `success:true`, correct `ungroupedCount` and `releasedChildCount`, children returned to the former parent and both became selected. Awaiting owner confirmation.
+_No pending manual tests._
 
 ## Completed
 
-- [x] **frame_selection resolves placement like group_selection**
+- [x] **Group nodes that share a parent**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-15. A rectangle at (0,100) and an ellipse at (150,100), both direct children of the page, were grouped with `group_selection({nodeIds:["51:19","51:20"]})`. Group `51:21` was created under `Page 1` containing both shapes at unchanged absolute bounds (0,100) and (150,100), group bounds (0,100) 250x100. The response carried no LIFTED notice, so `liftedToSharedParent` was false, no wrapper frame appeared, and `get_selection` returned the group as the sole selection.
+
+- [x] **Group nodes across different parents lifts them**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-15. The same two shapes were placed in sibling frames `Card A` (51:23) and `Card B` (51:24), at absolute (20,620) and (320,620), then grouped. The response reported `Nodes were LIFTED to their nearest shared ancestor "Page 1", which changed their parent in the layer tree.` Group `51:25` formed under the page containing both shapes at unchanged absolute bounds, and both former parents reported `children: []`.
+
+- [x] **Grouping when the shared ancestor is the page**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-15. After the cross-parent grouping above, `get_document_info` showed the page holding exactly three children, `Card A`, `Card B` and `Cross Parent Group`, with no wrapper frame created. The group sat directly under the page at (20,620) 400x100, matching Ctrl+G. This confirms `figma.currentPage` accepts children, so no wrapper is required.
+
+- [x] **Ungroup releases group and frame children**
+  - Testers: 1
+  - Result: Passed manually on 2026-10-15. A two-child group returned `success:true`, `ungroupedCount:1`, `releasedChildCount:2` with both child IDs, and `get_selection` returned both released children. The same was then repeated on a two-child frame, which returned the same counts and released both children to the page; `get_document_info` confirmed both containers were gone and only the two shapes remained.
+
+- [x] **Frame selection wraps nodes without moving them**
   - Testers: 1
   - Result: Passed manually on 2026-10-15. With one shape in each of two sibling frames, calling `frame_selection` produced a frame directly under the page in both input orders, with both shapes inside at unchanged absolute positions and both hosts emptied, proving the outcome no longer depends on argument order. Passing `parentId` placed the frame inside the named host instead, and a same-parent selection kept the new frame inside the shared parent rather than lifting it.
 

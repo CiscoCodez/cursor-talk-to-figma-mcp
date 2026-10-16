@@ -13,11 +13,11 @@
 
 ## Session Summary
 
-- Overall: Passed for the grouping toolset. No open findings.
-- Passed: Undo walks back through consecutive plugin edits (owner-verified 2026-10-15); frame selection wraps nodes, including cross-parent and selection-driven; ungroup returns success and selects released children; `set_parent` preserves absolute position without coordinates; grouping lifts cross-parent selections to the nearest shared ancestor; frame selection placement is order-independent.
+- Overall: Passed. All grouping toolset checks verified live; no open findings.
+- Passed: Group nodes that share a parent; group nodes across different parents lifts them; grouping when the shared ancestor is the page; ungroup releases group and frame children; frame selection wraps nodes without moving them; frame_selection resolves placement like group_selection; undo walks back through consecutive plugin edits; `set_parent` preserves absolute position without coordinates.
 - Failed: None. FIND-005, FIND-006, FIND-009 and FIND-011 are fixed and verified live; FIND-007 was a false positive caused by FIND-005.
 - Blocked: None
-- Notes: FIND-010, the "Must join a channel before sending commands" error, was closed as a one-time occurrence on 2026-10-15; it never recurred and no fix was applied. Remaining pending items in `test-list.md` still need owner sign-off before they are checked off.
+- Notes: FIND-010, the "Must join a channel before sending commands" error, was closed as a one-time occurrence on 2026-10-15; it never recurred and no fix was applied. During the final 2026-10-15 verification pass the plugin was briefly disconnected and rejoined the channel on request, which is consistent with FIND-010 being a transient connection drop rather than a code defect.
 
 ## Findings
 
