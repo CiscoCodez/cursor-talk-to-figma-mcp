@@ -13,11 +13,11 @@
 
 ## Session Summary
 
-- Overall: Passed for the grouping toolset; one unrelated item still open.
+- Overall: Passed for the grouping toolset. No open findings.
 - Passed: Undo walks back through consecutive plugin edits (owner-verified 2026-10-15); frame selection wraps nodes, including cross-parent and selection-driven; ungroup returns success and selects released children; `set_parent` preserves absolute position without coordinates; grouping lifts cross-parent selections to the nearest shared ancestor; frame selection placement is order-independent.
-- Failed: None outstanding. FIND-005, FIND-006, FIND-009 and FIND-011 are fixed and verified live.
+- Failed: None. FIND-005, FIND-006, FIND-009 and FIND-011 are fixed and verified live; FIND-007 was a false positive caused by FIND-005.
 - Blocked: None
-- Notes: FIND-010, the "Must join a channel before sending commands" error, remains open and uninvestigated. Remaining pending items in `test-list.md` still need owner sign-off before they are checked off.
+- Notes: FIND-010, the "Must join a channel before sending commands" error, was closed as a one-time occurrence on 2026-10-15; it never recurred and no fix was applied. Remaining pending items in `test-list.md` still need owner sign-off before they are checked off.
 
 ## Findings
 
@@ -94,7 +94,7 @@
 - Actual: The MCP server reported no channel was joined, despite a working channel earlier in the same session and successful reconnection attempts.
 - Evidence / attachments: Owner-reported, 2026-10-15.
 - Probable cause: Not established. Consistent with the plugin losing its relay connection and the server dropping channel state, rather than anything in the undo code path. Unrelated to FIND-009.
-- Status: Open, uninvestigated. Worth watching; the plugin's reconnect and channel-rejoin handling is the place to look.
+- Status: Closed as a one-time occurrence on 2026-10-15. Never reproduced by the agent across multiple runs, nor by the owner in subsequent testing. No fix applied, since there is no identified defect to fix. Revive this entry if the error reappears.
 - Retest result: Not applicable.
 
 ### FIND-011 - frame_selection places the new frame in the first node's parent
@@ -295,7 +295,7 @@ All five pending items remain unchecked. Existing completed tests and the origin
 | FIND-007 | Runtime revision unknown | 2026-10-15 | Fail indication | Unexpected relative coordinates; direct intermediate bbox retest needed. |
 | FIND-008 | Runtime revision unknown | 2026-10-15 | Observation | Empty-frame ungroup rejected without removal. |
 | FIND-009 | commitUndo-after build | 2026-10-15 | Pass | Was two commands per undo; owner confirmed one after the fix. |
-| FIND-010 | Runtime revision unknown | 2026-10-15 | Observation | Channel-lost error; cleared by plugin restart; not reproduced. |
+| FIND-010 | Runtime revision unknown | 2026-10-15 | Closed | One-time channel-lost error; never reproduced; no fix applied. |
 | FIND-011 | Fixed build | 2026-10-15 | Pass | Order-independent across both input orders; parentId override and same-parent branch both correct. |
 
 ## Final Canvas State and Handoff
